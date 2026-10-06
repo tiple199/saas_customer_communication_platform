@@ -2,10 +2,12 @@ package vn.lnt.saas_customer_communication_platform.feature.company.service.impl
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import vn.lnt.saas_customer_communication_platform.config.tenant.TenantContext;
 import vn.lnt.saas_customer_communication_platform.exception.InvalidOperationException;
 import vn.lnt.saas_customer_communication_platform.exception.ResourceNotFoundException;
 import vn.lnt.saas_customer_communication_platform.feature.auth.entity.User;
 import vn.lnt.saas_customer_communication_platform.feature.auth.repository.UserRepository;
+import vn.lnt.saas_customer_communication_platform.feature.company.dto.CompanyMemberResponse;
 import vn.lnt.saas_customer_communication_platform.feature.company.dto.CompanyResponse;
 import vn.lnt.saas_customer_communication_platform.feature.company.dto.CreateCompanyRequest;
 import vn.lnt.saas_customer_communication_platform.feature.company.dto.UpdateCompanyRequest;
@@ -154,5 +156,39 @@ public class CompanyServiceImpl implements CompanyService {
         userRepository.save(currentUser);
 
         return CompanyResponse.fromEntity(company, member.getRole(), member.getJoinedAt());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<CompanyMemberResponse> getCompanyMembers(String currentUserEmail, Long companyId) {
+        User currentUser = getUserByEmail(currentUserEmail);
+
+        Long targetCompanyId = companyId != null ? companyId : TenantContext.getTenantId();
+        if (targetCompanyId == null) {
+            throw new InvalidOperationException("Bạn chưa chọn công ty hoạt động");
+        }
+
+        CompanyMember currentMember = companyMemberRepository.findByIdUserIdAndIdCompanyId(currentUser.getId(), targetCompanyId)
+                .orElseThrow(() -> new InvalidOperationException("Bạn không có quyền xem danh sách thành viên của công ty này"));
+
+        if (currentMember.getStatus() != CompanyMemberStatus.ACTIVE) {
+            throw new InvalidOperationException("Tài khoản của bạn không ở trạng thái hoạt động trong công ty này");
+        }
+
+        List<CompanyMember> members = companyMemberRepository.findByIdCompanyId(targetCompanyId);
+        if (members.isEmpty()) {
+            return List.of();
+        }
+
+        List<Long> userIds = members.stream()
+                .map(m -> m.getId().getUserId())
+                .collect(Collectors.toList());
+
+        Map<Long, User> userMap = userRepository.findAllById(userIds).stream()
+                .collect(Collectors.toMap(User::getId, Function.identity()));
+
+        return members.stream()
+                .map(m -> CompanyMemberResponse.fromEntity(m, userMap.get(m.getId().getUserId())))
+                .collect(Collectors.toList());
     }
 }

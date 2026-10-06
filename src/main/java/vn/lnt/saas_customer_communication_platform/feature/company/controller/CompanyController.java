@@ -7,6 +7,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
 import vn.lnt.saas_customer_communication_platform.dto.ApiResponse;
+import vn.lnt.saas_customer_communication_platform.feature.company.dto.CompanyMemberResponse;
 import vn.lnt.saas_customer_communication_platform.feature.company.dto.CompanyResponse;
 import vn.lnt.saas_customer_communication_platform.feature.company.dto.CreateCompanyRequest;
 import vn.lnt.saas_customer_communication_platform.feature.company.dto.UpdateCompanyRequest;
@@ -67,5 +68,14 @@ public class CompanyController {
         String currentUserEmail = jwt != null ? jwt.getSubject() : null;
         CompanyResponse response = companyService.switchCompany(currentUserEmail, id);
         return ResponseEntity.ok(ApiResponse.success("Chuyển công ty thành công", response));
+    }
+
+    @GetMapping("/{id}/members")
+    public ResponseEntity<ApiResponse<List<CompanyMemberResponse>>> getCompanyMembers(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable Long id) {
+        String currentUserEmail = jwt != null ? jwt.getSubject() : null;
+        List<CompanyMemberResponse> response = companyService.getCompanyMembers(currentUserEmail, id);
+        return ResponseEntity.ok(ApiResponse.success("Lấy danh sách thành viên công ty thành công", response));
     }
 }

@@ -100,5 +100,14 @@ class CompanyControllerTest {
                 .andExpect(jsonPath("$.statusCode").value(200))
                 .andExpect(jsonPath("$.message").value("Chuyển công ty thành công"))
                 .andExpect(jsonPath("$.data.id").value(1));
+
+        // Test get company members by ID
+        mockMvc.perform(get("/api/v1/companies/1/members")
+                        .with(jwt().jwt(builder -> builder.subject("testuser@example.com"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.statusCode").value(200))
+                .andExpect(jsonPath("$.data", hasSize(1)))
+                .andExpect(jsonPath("$.data[0].email").value("testuser@example.com"))
+                .andExpect(jsonPath("$.data[0].role").value("OWNER"));
     }
 }
