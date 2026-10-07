@@ -14,6 +14,7 @@ import vn.lnt.saas_customer_communication_platform.feature.auth.repository.UserR
 
 import static org.hamcrest.Matchers.hasSize;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -40,6 +41,10 @@ class CompanyControllerTest {
         if (!userRepository.existsByEmail("testuser@example.com")) {
             User user = new User("testuser@example.com", "password123", "Test User", "ROLE_USER");
             userRepository.save(user);
+        }
+        if (!userRepository.existsByEmail("memberuser@example.com")) {
+            User memberUser = new User("memberuser@example.com", "password123", "Member User", "ROLE_USER");
+            userRepository.save(memberUser);
         }
     }
 
@@ -101,13 +106,56 @@ class CompanyControllerTest {
                 .andExpect(jsonPath("$.message").value("Chuyển công ty thành công"))
                 .andExpect(jsonPath("$.data.id").value(1));
 
+        // Test add member
+        String addMemberJson = """
+                {
+                    "email": "memberuser@example.com",
+                    "role": "ADMIN"
+                }
+                """;
+
+        mockMvc.perform(post("/api/v1/companies/1/members")
+                        .with(jwt().jwt(builder -> builder.subject("testuser@example.com")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(addMemberJson))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.statusCode").value(201))
+                .andExpect(jsonPath("$.data.email").value("memberuser@example.com"))
+                .andExpect(jsonPath("$.data.role").value("ADMIN"));
+
         // Test get company members by ID
         mockMvc.perform(get("/api/v1/companies/1/members")
                         .with(jwt().jwt(builder -> builder.subject("testuser@example.com"))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.statusCode").value(200))
-                .andExpect(jsonPath("$.data", hasSize(1)))
-                .andExpect(jsonPath("$.data[0].email").value("testuser@example.com"))
-                .andExpect(jsonPath("$.data[0].role").value("OWNER"));
+                .andExpect(jsonPath("$.data", hasSize(2)));
+
+        User memberUser = userRepository.findByEmail("memberuser@example.com").orElseThrow();
+
+        // ADMIN tries to kick OWNER (higher priority) -> Should fail
+        mockMvc.perform(delete("/api/v1/companies/1/members/1")
+                        .with(jwt().jwt(builder -> builder.subject("memberuser@example.com"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Bạn chỉ được phép xóa thành viên có cấp bậc thấp hơn mình"));
+
+        // ADMIN tries to kick self (equal priority) -> Should fail
+        mockMvc.perform(delete("/api/v1/companies/1/members/" + memberUser.getId())
+                        .with(jwt().jwt(builder -> builder.subject("memberuser@example.com"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Bạn chỉ được phép xóa thành viên có cấp bậc thấp hơn mình"));
+
+        // OWNER kicks ADMIN (lower priority) -> Should succeed
+        mockMvc.perform(delete("/api/v1/companies/1/members/" + memberUser.getId())
+                        .with(jwt().jwt(builder -> builder.subject("testuser@example.com"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.statusCode").value(200))
+                .andExpect(jsonPath("$.message").value("Xóa thành viên khỏi công ty thành công"));
+
+        // Verify member count back to 1
+        mockMvc.perform(get("/api/v1/companies/1/members")
+                        .with(jwt().jwt(builder -> builder.subject("testuser@example.com"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.statusCode").value(200))
+                .andExpect(jsonPath("$.data", hasSize(1)));
     }
 }

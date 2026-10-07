@@ -7,6 +7,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
 import vn.lnt.saas_customer_communication_platform.dto.ApiResponse;
+import vn.lnt.saas_customer_communication_platform.feature.company.dto.AddMemberRequest;
 import vn.lnt.saas_customer_communication_platform.feature.company.dto.CompanyMemberResponse;
 import vn.lnt.saas_customer_communication_platform.feature.company.dto.CompanyResponse;
 import vn.lnt.saas_customer_communication_platform.feature.company.dto.CreateCompanyRequest;
@@ -77,5 +78,26 @@ public class CompanyController {
         String currentUserEmail = jwt != null ? jwt.getSubject() : null;
         List<CompanyMemberResponse> response = companyService.getCompanyMembers(currentUserEmail, id);
         return ResponseEntity.ok(ApiResponse.success("Lấy danh sách thành viên công ty thành công", response));
+    }
+
+    @PostMapping("/{id}/members")
+    public ResponseEntity<ApiResponse<CompanyMemberResponse>> addMember(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable Long id,
+            @Valid @RequestBody AddMemberRequest request) {
+        String currentUserEmail = jwt != null ? jwt.getSubject() : null;
+        CompanyMemberResponse response = companyService.addMember(currentUserEmail, id, request);
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.created("Thêm thành viên thành công", response));
+    }
+
+    @DeleteMapping("/{id}/members/{memberUserId}")
+    public ResponseEntity<ApiResponse<Void>> removeMember(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable Long id,
+            @PathVariable Long memberUserId) {
+        String currentUserEmail = jwt != null ? jwt.getSubject() : null;
+        companyService.removeMember(currentUserEmail, id, memberUserId);
+        return ResponseEntity.ok(ApiResponse.success("Xóa thành viên khỏi công ty thành công", null));
     }
 }
