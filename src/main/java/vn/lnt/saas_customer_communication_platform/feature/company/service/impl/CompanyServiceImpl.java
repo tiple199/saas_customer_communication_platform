@@ -13,6 +13,7 @@ import vn.lnt.saas_customer_communication_platform.feature.company.dto.CompanyMe
 import vn.lnt.saas_customer_communication_platform.feature.company.dto.CompanyResponse;
 import vn.lnt.saas_customer_communication_platform.feature.company.dto.CreateCompanyRequest;
 import vn.lnt.saas_customer_communication_platform.feature.company.dto.UpdateCompanyRequest;
+import vn.lnt.saas_customer_communication_platform.feature.company.dto.UpdateMemberStatusRequest;
 import vn.lnt.saas_customer_communication_platform.feature.company.entity.Company;
 import vn.lnt.saas_customer_communication_platform.feature.company.entity.CompanyMember;
 import vn.lnt.saas_customer_communication_platform.feature.company.entity.CompanyMemberRole;
@@ -288,5 +289,53 @@ public class CompanyServiceImpl implements CompanyService {
             targetUser.setCurrentCompanyId(null);
             userRepository.save(targetUser);
         }
+    }
+
+    @Override
+    @Transactional
+    public CompanyMemberResponse updateMemberStatus(String currentUserEmail, Long companyId, Long memberUserId, UpdateMemberStatusRequest request) {
+        User currentUser = getUserByEmail(currentUserEmail);
+
+        Long targetCompanyId = companyId != null ? companyId : TenantContext.getTenantId();
+        if (targetCompanyId == null) {
+            throw new InvalidOperationException("Bạn chưa chọn công ty hoạt động");
+        }
+
+        companyRepository.findById(targetCompanyId)
+                .orElseThrow(() -> new ResourceNotFoundException("Company", "id", targetCompanyId));
+
+        CompanyMember inviterMember = companyMemberRepository.findByIdUserIdAndIdCompanyId(currentUser.getId(), targetCompanyId)
+                .orElseThrow(() -> new InvalidOperationException("Bạn không phải là thành viên của công ty này"));
+
+        if (inviterMember.getStatus() != CompanyMemberStatus.ACTIVE) {
+            throw new InvalidOperationException("Tài khoản của bạn không ở trạng thái hoạt động trong công ty này");
+        }
+
+        if (inviterMember.getRole() != CompanyMemberRole.OWNER && inviterMember.getRole() != CompanyMemberRole.ADMIN) {
+            throw new InvalidOperationException("Chỉ người sở hữu hoặc quản trị viên mới có quyền cập nhật trạng thái thành viên");
+        }
+
+        CompanyMember targetMember = companyMemberRepository.findByIdUserIdAndIdCompanyId(memberUserId, targetCompanyId)
+                .orElseThrow(() -> new ResourceNotFoundException("CompanyMember", "userId", memberUserId));
+
+        if (inviterMember.getRole().getPriority() <= targetMember.getRole().getPriority()) {
+            throw new InvalidOperationException("Bạn chỉ được phép cập nhật trạng thái thành viên có cấp bậc thấp hơn mình");
+        }
+
+        targetMember.setStatus(request.getStatus());
+        CompanyMember updatedMember = companyMemberRepository.save(targetMember);
+
+        User targetUser = userRepository.findById(memberUserId).orElse(null);
+        if (targetUser != null) {
+            if (request.getStatus() == CompanyMemberStatus.INACTIVE && targetCompanyId.equals(targetUser.getCurrentCompanyId())) {
+                targetUser.setCurrentCompanyId(null);
+                userRepository.save(targetUser);
+            } else if (request.getStatus() == CompanyMemberStatus.ACTIVE && targetUser.getCurrentCompanyId() == null) {
+                targetUser.setCurrentCompanyId(targetCompanyId);
+                userRepository.save(targetUser);
+            }
+        }
+
+        return CompanyMemberResponse.fromEntity(updatedMember, targetUser);
     }
 }

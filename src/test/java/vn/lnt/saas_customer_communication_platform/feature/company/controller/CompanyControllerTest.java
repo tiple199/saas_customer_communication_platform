@@ -16,6 +16,7 @@ import static org.hamcrest.Matchers.hasSize;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -66,6 +67,9 @@ class CompanyControllerTest {
                 .andExpect(jsonPath("$.data.userRole").value("OWNER"))
                 .andReturn().getResponse().getContentAsString();
 
+        Object compIdObj = com.jayway.jsonpath.JsonPath.read(responseStr, "$.data.id");
+        User testUser = userRepository.findByEmail("testuser@example.com").orElseThrow();
+
         mockMvc.perform(get("/api/v1/companies")
                         .with(jwt().jwt(builder -> builder.subject("testuser@example.com"))))
                 .andExpect(status().isOk())
@@ -75,7 +79,7 @@ class CompanyControllerTest {
                 .andExpect(jsonPath("$.data[0].userRole").value("OWNER"));
 
         // Test get company by ID
-        mockMvc.perform(get("/api/v1/companies/1")
+        mockMvc.perform(get("/api/v1/companies/" + compIdObj)
                         .with(jwt().jwt(builder -> builder.subject("testuser@example.com"))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.statusCode").value(200))
@@ -89,7 +93,7 @@ class CompanyControllerTest {
                 }
                 """;
 
-        mockMvc.perform(put("/api/v1/companies/1")
+        mockMvc.perform(put("/api/v1/companies/" + compIdObj)
                         .with(jwt().jwt(builder -> builder.subject("testuser@example.com")))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(updateCompanyJson))
@@ -99,12 +103,12 @@ class CompanyControllerTest {
                 .andExpect(jsonPath("$.data.logoUrl").value("https://example.com/logo.png"));
 
         // Test switch company
-        mockMvc.perform(post("/api/v1/companies/1/switch")
+        mockMvc.perform(post("/api/v1/companies/" + compIdObj + "/switch")
                         .with(jwt().jwt(builder -> builder.subject("testuser@example.com"))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.statusCode").value(200))
                 .andExpect(jsonPath("$.message").value("Chuyển công ty thành công"))
-                .andExpect(jsonPath("$.data.id").value(1));
+                .andExpect(jsonPath("$.data.id").value(compIdObj));
 
         // Test add member
         String addMemberJson = """
@@ -114,7 +118,7 @@ class CompanyControllerTest {
                 }
                 """;
 
-        mockMvc.perform(post("/api/v1/companies/1/members")
+        mockMvc.perform(post("/api/v1/companies/" + compIdObj + "/members")
                         .with(jwt().jwt(builder -> builder.subject("testuser@example.com")))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(addMemberJson))
@@ -124,7 +128,7 @@ class CompanyControllerTest {
                 .andExpect(jsonPath("$.data.role").value("ADMIN"));
 
         // Test get company members by ID
-        mockMvc.perform(get("/api/v1/companies/1/members")
+        mockMvc.perform(get("/api/v1/companies/" + compIdObj + "/members")
                         .with(jwt().jwt(builder -> builder.subject("testuser@example.com"))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.statusCode").value(200))
@@ -132,30 +136,106 @@ class CompanyControllerTest {
 
         User memberUser = userRepository.findByEmail("memberuser@example.com").orElseThrow();
 
+        // ADMIN tries to update status of OWNER (higher priority) -> Should fail
+        String deactivateJson = """
+                {
+                    "status": "INACTIVE"
+                }
+                """;
+        mockMvc.perform(patch("/api/v1/companies/" + compIdObj + "/members/" + testUser.getId() + "/status")
+                        .with(jwt().jwt(builder -> builder.subject("memberuser@example.com")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(deactivateJson))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Bạn chỉ được phép cập nhật trạng thái thành viên có cấp bậc thấp hơn mình"));
+
+        // OWNER updates ADMIN status to INACTIVE -> Should succeed
+        mockMvc.perform(patch("/api/v1/companies/" + compIdObj + "/members/" + memberUser.getId() + "/status")
+                        .with(jwt().jwt(builder -> builder.subject("testuser@example.com")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(deactivateJson))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.statusCode").value(200))
+                .andExpect(jsonPath("$.data.status").value("INACTIVE"));
+
+        // OWNER updates ADMIN status back to ACTIVE -> Should succeed
+        String activateJson = """
+                {
+                    "status": "ACTIVE"
+                }
+                """;
+        mockMvc.perform(patch("/api/v1/companies/" + compIdObj + "/members/" + memberUser.getId() + "/status")
+                        .with(jwt().jwt(builder -> builder.subject("testuser@example.com")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(activateJson))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.statusCode").value(200))
+                .andExpect(jsonPath("$.data.status").value("ACTIVE"));
+
         // ADMIN tries to kick OWNER (higher priority) -> Should fail
-        mockMvc.perform(delete("/api/v1/companies/1/members/1")
+        mockMvc.perform(delete("/api/v1/companies/" + compIdObj + "/members/" + testUser.getId())
                         .with(jwt().jwt(builder -> builder.subject("memberuser@example.com"))))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("Bạn chỉ được phép xóa thành viên có cấp bậc thấp hơn mình"));
 
         // ADMIN tries to kick self (equal priority) -> Should fail
-        mockMvc.perform(delete("/api/v1/companies/1/members/" + memberUser.getId())
+        mockMvc.perform(delete("/api/v1/companies/" + compIdObj + "/members/" + memberUser.getId())
                         .with(jwt().jwt(builder -> builder.subject("memberuser@example.com"))))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("Bạn chỉ được phép xóa thành viên có cấp bậc thấp hơn mình"));
 
         // OWNER kicks ADMIN (lower priority) -> Should succeed
-        mockMvc.perform(delete("/api/v1/companies/1/members/" + memberUser.getId())
+        mockMvc.perform(delete("/api/v1/companies/" + compIdObj + "/members/" + memberUser.getId())
                         .with(jwt().jwt(builder -> builder.subject("testuser@example.com"))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.statusCode").value(200))
                 .andExpect(jsonPath("$.message").value("Xóa thành viên khỏi công ty thành công"));
 
         // Verify member count back to 1
-        mockMvc.perform(get("/api/v1/companies/1/members")
+        mockMvc.perform(get("/api/v1/companies/" + compIdObj + "/members")
                         .with(jwt().jwt(builder -> builder.subject("testuser@example.com"))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.statusCode").value(200))
                 .andExpect(jsonPath("$.data", hasSize(1)));
+    }
+
+    @Test
+    void crossCompanyAccessDenied() throws Exception {
+        if (!userRepository.existsByEmail("companyowner@example.com")) {
+            User companyOwner = new User("companyowner@example.com", "password123", "Owner User", "ROLE_USER");
+            userRepository.save(companyOwner);
+        }
+        if (!userRepository.existsByEmail("otheruser@example.com")) {
+            User otherUser = new User("otheruser@example.com", "password123", "Other User", "ROLE_USER");
+            userRepository.save(otherUser);
+        }
+
+        // Create a company with companyowner
+        String createCompanyJson = """
+                {
+                    "name": "Isolated Corp"
+                }
+                """;
+
+        String resStr = mockMvc.perform(post("/api/v1/companies")
+                        .with(jwt().jwt(builder -> builder.subject("companyowner@example.com")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(createCompanyJson))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+
+        Object compIdObj = com.jayway.jsonpath.JsonPath.read(resStr, "$.data.id");
+
+        // Non-member tries to get Company details -> Should fail
+        mockMvc.perform(get("/api/v1/companies/" + compIdObj)
+                        .with(jwt().jwt(builder -> builder.subject("otheruser@example.com"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Bạn không có quyền truy cập công ty này"));
+
+        // Non-member tries to get Company members -> Should fail
+        mockMvc.perform(get("/api/v1/companies/" + compIdObj + "/members")
+                        .with(jwt().jwt(builder -> builder.subject("otheruser@example.com"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Bạn không có quyền xem danh sách thành viên của công ty này"));
     }
 }

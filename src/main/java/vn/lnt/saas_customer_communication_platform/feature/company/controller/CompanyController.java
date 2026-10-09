@@ -12,6 +12,7 @@ import vn.lnt.saas_customer_communication_platform.feature.company.dto.CompanyMe
 import vn.lnt.saas_customer_communication_platform.feature.company.dto.CompanyResponse;
 import vn.lnt.saas_customer_communication_platform.feature.company.dto.CreateCompanyRequest;
 import vn.lnt.saas_customer_communication_platform.feature.company.dto.UpdateCompanyRequest;
+import vn.lnt.saas_customer_communication_platform.feature.company.dto.UpdateMemberStatusRequest;
 import vn.lnt.saas_customer_communication_platform.feature.company.service.CompanyService;
 
 import java.util.List;
@@ -99,5 +100,16 @@ public class CompanyController {
         String currentUserEmail = jwt != null ? jwt.getSubject() : null;
         companyService.removeMember(currentUserEmail, id, memberUserId);
         return ResponseEntity.ok(ApiResponse.success("Xóa thành viên khỏi công ty thành công", null));
+    }
+
+    @PatchMapping("/{id}/members/{memberUserId}/status")
+    public ResponseEntity<ApiResponse<CompanyMemberResponse>> updateMemberStatus(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable Long id,
+            @PathVariable Long memberUserId,
+            @Valid @RequestBody UpdateMemberStatusRequest request) {
+        String currentUserEmail = jwt != null ? jwt.getSubject() : null;
+        CompanyMemberResponse response = companyService.updateMemberStatus(currentUserEmail, id, memberUserId, request);
+        return ResponseEntity.ok(ApiResponse.success("Cập nhật trạng thái thành viên thành công", response));
     }
 }

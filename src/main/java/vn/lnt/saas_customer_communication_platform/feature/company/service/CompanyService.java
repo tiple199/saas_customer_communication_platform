@@ -5,6 +5,7 @@ import vn.lnt.saas_customer_communication_platform.feature.company.dto.CompanyMe
 import vn.lnt.saas_customer_communication_platform.feature.company.dto.CompanyResponse;
 import vn.lnt.saas_customer_communication_platform.feature.company.dto.CreateCompanyRequest;
 import vn.lnt.saas_customer_communication_platform.feature.company.dto.UpdateCompanyRequest;
+import vn.lnt.saas_customer_communication_platform.feature.company.dto.UpdateMemberStatusRequest;
 
 import java.util.List;
 
@@ -25,4 +26,6 @@ public interface CompanyService {
     CompanyMemberResponse addMember(String currentUserEmail, Long companyId, AddMemberRequest request);
 
     void removeMember(String currentUserEmail, Long companyId, Long memberUserId);
+
+    CompanyMemberResponse updateMemberStatus(String currentUserEmail, Long companyId, Long memberUserId, UpdateMemberStatusRequest request);
 }
