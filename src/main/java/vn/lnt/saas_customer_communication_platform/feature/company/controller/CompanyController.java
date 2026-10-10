@@ -11,6 +11,7 @@ import vn.lnt.saas_customer_communication_platform.feature.company.dto.AddMember
 import vn.lnt.saas_customer_communication_platform.feature.company.dto.CompanyMemberResponse;
 import vn.lnt.saas_customer_communication_platform.feature.company.dto.CompanyResponse;
 import vn.lnt.saas_customer_communication_platform.feature.company.dto.CreateCompanyRequest;
+import vn.lnt.saas_customer_communication_platform.feature.company.dto.CreateMemberAccountRequest;
 import vn.lnt.saas_customer_communication_platform.feature.company.dto.UpdateCompanyRequest;
 import vn.lnt.saas_customer_communication_platform.feature.company.dto.UpdateMemberStatusRequest;
 import vn.lnt.saas_customer_communication_platform.feature.company.service.CompanyService;
@@ -111,5 +112,16 @@ public class CompanyController {
         String currentUserEmail = jwt != null ? jwt.getSubject() : null;
         CompanyMemberResponse response = companyService.updateMemberStatus(currentUserEmail, id, memberUserId, request);
         return ResponseEntity.ok(ApiResponse.success("Cập nhật trạng thái thành viên thành công", response));
+    }
+
+    @PostMapping("/{id}/members/create-account")
+    public ResponseEntity<ApiResponse<CompanyMemberResponse>> createMemberAccount(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable Long id,
+            @Valid @RequestBody CreateMemberAccountRequest request) {
+        String currentUserEmail = jwt != null ? jwt.getSubject() : null;
+        CompanyMemberResponse response = companyService.createMemberAccount(currentUserEmail, id, request);
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.created("Tạo tài khoản và thêm thành viên thành công", response));
     }
 }

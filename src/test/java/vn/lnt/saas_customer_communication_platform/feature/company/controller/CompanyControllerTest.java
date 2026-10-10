@@ -238,4 +238,48 @@ class CompanyControllerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("Bạn không có quyền xem danh sách thành viên của công ty này"));
     }
+
+    @Test
+    void createMemberAccountSuccess() throws Exception {
+        if (!userRepository.existsByEmail("accowner@example.com")) {
+            User accOwner = new User("accowner@example.com", "password123", "Account Owner", "ROLE_USER");
+            userRepository.save(accOwner);
+        }
+
+        // Create company
+        String createCompanyJson = """
+                {
+                    "name": "Account Corp"
+                }
+                """;
+
+        String resStr = mockMvc.perform(post("/api/v1/companies")
+                        .with(jwt().jwt(builder -> builder.subject("accowner@example.com")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(createCompanyJson))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+
+        Object compIdObj = com.jayway.jsonpath.JsonPath.read(resStr, "$.data.id");
+
+        // Create new member account with preset password
+        String createAccountJson = """
+                {
+                    "email": "newstaff@example.com",
+                    "password": "staffPassword123",
+                    "fullName": "New Staff Member",
+                    "role": "STAFF"
+                }
+                """;
+
+        mockMvc.perform(post("/api/v1/companies/" + compIdObj + "/members/create-account")
+                        .with(jwt().jwt(builder -> builder.subject("accowner@example.com")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(createAccountJson))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.statusCode").value(201))
+                .andExpect(jsonPath("$.data.email").value("newstaff@example.com"))
+                .andExpect(jsonPath("$.data.fullName").value("New Staff Member"))
+                .andExpect(jsonPath("$.data.role").value("STAFF"));
+    }
 }

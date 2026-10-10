@@ -1,5 +1,6 @@
 package vn.lnt.saas_customer_communication_platform.feature.company.service.impl;
 
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import vn.lnt.saas_customer_communication_platform.config.tenant.TenantContext;
@@ -12,6 +13,7 @@ import vn.lnt.saas_customer_communication_platform.feature.company.dto.AddMember
 import vn.lnt.saas_customer_communication_platform.feature.company.dto.CompanyMemberResponse;
 import vn.lnt.saas_customer_communication_platform.feature.company.dto.CompanyResponse;
 import vn.lnt.saas_customer_communication_platform.feature.company.dto.CreateCompanyRequest;
+import vn.lnt.saas_customer_communication_platform.feature.company.dto.CreateMemberAccountRequest;
 import vn.lnt.saas_customer_communication_platform.feature.company.dto.UpdateCompanyRequest;
 import vn.lnt.saas_customer_communication_platform.feature.company.dto.UpdateMemberStatusRequest;
 import vn.lnt.saas_customer_communication_platform.feature.company.entity.Company;
@@ -33,18 +35,84 @@ public class CompanyServiceImpl implements CompanyService {
     private final CompanyRepository companyRepository;
     private final CompanyMemberRepository companyMemberRepository;
     private final UserRepository userRepository;
+    private final PasswordEncoder passwordEncoder;
 
     public CompanyServiceImpl(CompanyRepository companyRepository,
                                CompanyMemberRepository companyMemberRepository,
-                               UserRepository userRepository) {
+                               UserRepository userRepository,
+                               PasswordEncoder passwordEncoder) {
         this.companyRepository = companyRepository;
         this.companyMemberRepository = companyMemberRepository;
         this.userRepository = userRepository;
+        this.passwordEncoder = passwordEncoder;
     }
 
     private User getUserByEmail(String email) {
         return userRepository.findByEmail(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User", "email", email));
+    }
+
+    private Company getCompanyByIdOrThrow(Long companyId) {
+        return companyRepository.findById(companyId)
+                .orElseThrow(() -> new ResourceNotFoundException("Company", "id", companyId));
+    }
+
+    private Long resolveTargetCompanyId(Long companyId) {
+        Long targetCompanyId = companyId != null ? companyId : TenantContext.getTenantId();
+        if (targetCompanyId == null) {
+            throw new InvalidOperationException("Bạn chưa chọn công ty hoạt động");
+        }
+        return targetCompanyId;
+    }
+
+    private CompanyMember getActiveAdminOrOwnerMember(User currentUser, Long companyId, String actionErrorMessage) {
+        CompanyMember member = companyMemberRepository.findByIdUserIdAndIdCompanyId(currentUser.getId(), companyId)
+                .orElseThrow(() -> new InvalidOperationException("Bạn không phải là thành viên của công ty này"));
+
+        if (member.getStatus() != CompanyMemberStatus.ACTIVE) {
+            throw new InvalidOperationException("Tài khoản của bạn không ở trạng thái hoạt động trong công ty này");
+        }
+
+        if (member.getRole() != CompanyMemberRole.OWNER && member.getRole() != CompanyMemberRole.ADMIN) {
+            throw new InvalidOperationException(actionErrorMessage);
+        }
+
+        return member;
+    }
+
+    private void validateHigherPriority(CompanyMemberRole inviterRole, CompanyMemberRole targetRole, String errorMessage) {
+        if (inviterRole.getPriority() <= targetRole.getPriority()) {
+            throw new InvalidOperationException(errorMessage);
+        }
+    }
+
+    private CompanyMember saveOrReactivateMember(User targetUser, Long companyId, CompanyMemberRole role) {
+        CompanyMember memberToSave;
+        var existingMemberOpt = companyMemberRepository.findByIdUserIdAndIdCompanyId(targetUser.getId(), companyId);
+        if (existingMemberOpt.isPresent()) {
+            CompanyMember existingMember = existingMemberOpt.get();
+            if (existingMember.getStatus() == CompanyMemberStatus.ACTIVE) {
+                throw new DuplicateResourceException("CompanyMember", "email", targetUser.getEmail());
+            }
+            existingMember.setStatus(CompanyMemberStatus.ACTIVE);
+            existingMember.setRole(role);
+            memberToSave = existingMember;
+        } else {
+            memberToSave = new CompanyMember(
+                    targetUser.getId(),
+                    companyId,
+                    role,
+                    CompanyMemberStatus.ACTIVE
+            );
+        }
+        return companyMemberRepository.save(memberToSave);
+    }
+
+    private void updateTargetUserCompanyIfNull(User targetUser, Long companyId) {
+        if (targetUser.getCurrentCompanyId() == null) {
+            targetUser.setCurrentCompanyId(companyId);
+            userRepository.save(targetUser);
+        }
     }
 
     @Override
@@ -67,10 +135,7 @@ public class CompanyServiceImpl implements CompanyService {
         );
         CompanyMember savedMember = companyMemberRepository.save(member);
 
-        if (currentUser.getCurrentCompanyId() == null) {
-            currentUser.setCurrentCompanyId(savedCompany.getId());
-            userRepository.save(currentUser);
-        }
+        updateTargetUserCompanyIfNull(currentUser, savedCompany.getId());
 
         return CompanyResponse.fromEntity(savedCompany, savedMember.getRole(), savedMember.getJoinedAt());
     }
@@ -90,7 +155,7 @@ public class CompanyServiceImpl implements CompanyService {
                 .collect(Collectors.toList());
 
         Map<Long, Company> companyMap = companyRepository.findAllById(companyIds).stream()
-                .collect(Collectors.toMap(c -> c.getId(), Function.identity()));
+                .collect(Collectors.toMap(Company::getId, Function.identity()));
 
         return memberships.stream()
                 .filter(m -> companyMap.containsKey(m.getId().getCompanyId()))
@@ -105,9 +170,7 @@ public class CompanyServiceImpl implements CompanyService {
     @Transactional(readOnly = true)
     public CompanyResponse getCompanyById(String currentUserEmail, Long companyId) {
         User currentUser = getUserByEmail(currentUserEmail);
-
-        Company company = companyRepository.findById(companyId)
-                .orElseThrow(() -> new ResourceNotFoundException("Company", "id", companyId));
+        Company company = getCompanyByIdOrThrow(companyId);
 
         CompanyMember member = companyMemberRepository.findByIdUserIdAndIdCompanyId(currentUser.getId(), companyId)
                 .orElseThrow(() -> new InvalidOperationException("Bạn không có quyền truy cập công ty này"));
@@ -119,9 +182,7 @@ public class CompanyServiceImpl implements CompanyService {
     @Transactional
     public CompanyResponse updateCompany(String currentUserEmail, Long companyId, UpdateCompanyRequest request) {
         User currentUser = getUserByEmail(currentUserEmail);
-
-        Company company = companyRepository.findById(companyId)
-                .orElseThrow(() -> new ResourceNotFoundException("Company", "id", companyId));
+        Company company = getCompanyByIdOrThrow(companyId);
 
         CompanyMember member = companyMemberRepository.findByIdUserIdAndIdCompanyId(currentUser.getId(), companyId)
                 .orElseThrow(() -> new InvalidOperationException("Bạn không phải là thành viên của công ty này"));
@@ -148,9 +209,7 @@ public class CompanyServiceImpl implements CompanyService {
     @Transactional
     public CompanyResponse switchCompany(String currentUserEmail, Long companyId) {
         User currentUser = getUserByEmail(currentUserEmail);
-
-        Company company = companyRepository.findById(companyId)
-                .orElseThrow(() -> new ResourceNotFoundException("Company", "id", companyId));
+        Company company = getCompanyByIdOrThrow(companyId);
 
         CompanyMember member = companyMemberRepository.findByIdUserIdAndIdCompanyId(currentUser.getId(), companyId)
                 .orElseThrow(() -> new InvalidOperationException("Bạn không thuộc công ty này"));
@@ -165,11 +224,7 @@ public class CompanyServiceImpl implements CompanyService {
     @Transactional(readOnly = true)
     public List<CompanyMemberResponse> getCompanyMembers(String currentUserEmail, Long companyId) {
         User currentUser = getUserByEmail(currentUserEmail);
-
-        Long targetCompanyId = companyId != null ? companyId : TenantContext.getTenantId();
-        if (targetCompanyId == null) {
-            throw new InvalidOperationException("Bạn chưa chọn công ty hoạt động");
-        }
+        Long targetCompanyId = resolveTargetCompanyId(companyId);
 
         CompanyMember currentMember = companyMemberRepository.findByIdUserIdAndIdCompanyId(currentUser.getId(), targetCompanyId)
                 .orElseThrow(() -> new InvalidOperationException("Bạn không có quyền xem danh sách thành viên của công ty này"));
@@ -199,54 +254,15 @@ public class CompanyServiceImpl implements CompanyService {
     @Transactional
     public CompanyMemberResponse addMember(String currentUserEmail, Long companyId, AddMemberRequest request) {
         User currentUser = getUserByEmail(currentUserEmail);
+        Long targetCompanyId = resolveTargetCompanyId(companyId);
+        getCompanyByIdOrThrow(targetCompanyId);
 
-        Long targetCompanyId = companyId != null ? companyId : TenantContext.getTenantId();
-        if (targetCompanyId == null) {
-            throw new InvalidOperationException("Bạn chưa chọn công ty hoạt động");
-        }
+        getActiveAdminOrOwnerMember(currentUser, targetCompanyId,
+                "Chỉ người sở hữu hoặc quản trị viên mới có quyền thêm thành viên vào công ty");
 
-        Company company = companyRepository.findById(targetCompanyId)
-                .orElseThrow(() -> new ResourceNotFoundException("Company", "id", targetCompanyId));
-
-        CompanyMember inviterMember = companyMemberRepository.findByIdUserIdAndIdCompanyId(currentUser.getId(), targetCompanyId)
-                .orElseThrow(() -> new InvalidOperationException("Bạn không phải là thành viên của công ty này"));
-
-        if (inviterMember.getStatus() != CompanyMemberStatus.ACTIVE) {
-            throw new InvalidOperationException("Tài khoản của bạn không ở trạng thái hoạt động trong công ty này");
-        }
-
-        if (inviterMember.getRole() != CompanyMemberRole.OWNER && inviterMember.getRole() != CompanyMemberRole.ADMIN) {
-            throw new InvalidOperationException("Chỉ người sở hữu hoặc quản trị viên mới có quyền thêm thành viên vào công ty");
-        }
-
-        User targetUser = userRepository.findByEmail(request.getEmail())
-                .orElseThrow(() -> new ResourceNotFoundException("User", "email", request.getEmail()));
-
-        CompanyMember memberToSave;
-        var existingMemberOpt = companyMemberRepository.findByIdUserIdAndIdCompanyId(targetUser.getId(), targetCompanyId);
-        if (existingMemberOpt.isPresent()) {
-            CompanyMember existingMember = existingMemberOpt.get();
-            if (existingMember.getStatus() == CompanyMemberStatus.ACTIVE) {
-                throw new DuplicateResourceException("CompanyMember", "email", request.getEmail());
-            }
-            existingMember.setStatus(CompanyMemberStatus.ACTIVE);
-            existingMember.setRole(request.getRole());
-            memberToSave = existingMember;
-        } else {
-            memberToSave = new CompanyMember(
-                    targetUser.getId(),
-                    targetCompanyId,
-                    request.getRole(),
-                    CompanyMemberStatus.ACTIVE
-            );
-        }
-
-        CompanyMember savedMember = companyMemberRepository.save(memberToSave);
-
-        if (targetUser.getCurrentCompanyId() == null) {
-            targetUser.setCurrentCompanyId(targetCompanyId);
-            userRepository.save(targetUser);
-        }
+        User targetUser = getUserByEmail(request.getEmail());
+        CompanyMember savedMember = saveOrReactivateMember(targetUser, targetCompanyId, request.getRole());
+        updateTargetUserCompanyIfNull(targetUser, targetCompanyId);
 
         return CompanyMemberResponse.fromEntity(savedMember, targetUser);
     }
@@ -255,32 +271,17 @@ public class CompanyServiceImpl implements CompanyService {
     @Transactional
     public void removeMember(String currentUserEmail, Long companyId, Long memberUserId) {
         User currentUser = getUserByEmail(currentUserEmail);
+        Long targetCompanyId = resolveTargetCompanyId(companyId);
+        getCompanyByIdOrThrow(targetCompanyId);
 
-        Long targetCompanyId = companyId != null ? companyId : TenantContext.getTenantId();
-        if (targetCompanyId == null) {
-            throw new InvalidOperationException("Bạn chưa chọn công ty hoạt động");
-        }
-
-        companyRepository.findById(targetCompanyId)
-                .orElseThrow(() -> new ResourceNotFoundException("Company", "id", targetCompanyId));
-
-        CompanyMember inviterMember = companyMemberRepository.findByIdUserIdAndIdCompanyId(currentUser.getId(), targetCompanyId)
-                .orElseThrow(() -> new InvalidOperationException("Bạn không phải là thành viên của công ty này"));
-
-        if (inviterMember.getStatus() != CompanyMemberStatus.ACTIVE) {
-            throw new InvalidOperationException("Tài khoản của bạn không ở trạng thái hoạt động trong công ty này");
-        }
-
-        if (inviterMember.getRole() != CompanyMemberRole.OWNER && inviterMember.getRole() != CompanyMemberRole.ADMIN) {
-            throw new InvalidOperationException("Chỉ người sở hữu hoặc quản trị viên mới có quyền xóa thành viên");
-        }
+        CompanyMember inviterMember = getActiveAdminOrOwnerMember(currentUser, targetCompanyId,
+                "Chỉ người sở hữu hoặc quản trị viên mới có quyền xóa thành viên");
 
         CompanyMember targetMember = companyMemberRepository.findByIdUserIdAndIdCompanyId(memberUserId, targetCompanyId)
                 .orElseThrow(() -> new ResourceNotFoundException("CompanyMember", "userId", memberUserId));
 
-        if (inviterMember.getRole().getPriority() <= targetMember.getRole().getPriority()) {
-            throw new InvalidOperationException("Bạn chỉ được phép xóa thành viên có cấp bậc thấp hơn mình");
-        }
+        validateHigherPriority(inviterMember.getRole(), targetMember.getRole(),
+                "Bạn chỉ được phép xóa thành viên có cấp bậc thấp hơn mình");
 
         companyMemberRepository.delete(targetMember);
 
@@ -295,32 +296,17 @@ public class CompanyServiceImpl implements CompanyService {
     @Transactional
     public CompanyMemberResponse updateMemberStatus(String currentUserEmail, Long companyId, Long memberUserId, UpdateMemberStatusRequest request) {
         User currentUser = getUserByEmail(currentUserEmail);
+        Long targetCompanyId = resolveTargetCompanyId(companyId);
+        getCompanyByIdOrThrow(targetCompanyId);
 
-        Long targetCompanyId = companyId != null ? companyId : TenantContext.getTenantId();
-        if (targetCompanyId == null) {
-            throw new InvalidOperationException("Bạn chưa chọn công ty hoạt động");
-        }
-
-        companyRepository.findById(targetCompanyId)
-                .orElseThrow(() -> new ResourceNotFoundException("Company", "id", targetCompanyId));
-
-        CompanyMember inviterMember = companyMemberRepository.findByIdUserIdAndIdCompanyId(currentUser.getId(), targetCompanyId)
-                .orElseThrow(() -> new InvalidOperationException("Bạn không phải là thành viên của công ty này"));
-
-        if (inviterMember.getStatus() != CompanyMemberStatus.ACTIVE) {
-            throw new InvalidOperationException("Tài khoản của bạn không ở trạng thái hoạt động trong công ty này");
-        }
-
-        if (inviterMember.getRole() != CompanyMemberRole.OWNER && inviterMember.getRole() != CompanyMemberRole.ADMIN) {
-            throw new InvalidOperationException("Chỉ người sở hữu hoặc quản trị viên mới có quyền cập nhật trạng thái thành viên");
-        }
+        CompanyMember inviterMember = getActiveAdminOrOwnerMember(currentUser, targetCompanyId,
+                "Chỉ người sở hữu hoặc quản trị viên mới có quyền cập nhật trạng thái thành viên");
 
         CompanyMember targetMember = companyMemberRepository.findByIdUserIdAndIdCompanyId(memberUserId, targetCompanyId)
                 .orElseThrow(() -> new ResourceNotFoundException("CompanyMember", "userId", memberUserId));
 
-        if (inviterMember.getRole().getPriority() <= targetMember.getRole().getPriority()) {
-            throw new InvalidOperationException("Bạn chỉ được phép cập nhật trạng thái thành viên có cấp bậc thấp hơn mình");
-        }
+        validateHigherPriority(inviterMember.getRole(), targetMember.getRole(),
+                "Bạn chỉ được phép cập nhật trạng thái thành viên có cấp bậc thấp hơn mình");
 
         targetMember.setStatus(request.getStatus());
         CompanyMember updatedMember = companyMemberRepository.save(targetMember);
@@ -337,5 +323,39 @@ public class CompanyServiceImpl implements CompanyService {
         }
 
         return CompanyMemberResponse.fromEntity(updatedMember, targetUser);
+    }
+
+    @Override
+    @Transactional
+    public CompanyMemberResponse createMemberAccount(String currentUserEmail, Long companyId, CreateMemberAccountRequest request) {
+        User currentUser = getUserByEmail(currentUserEmail);
+        Long targetCompanyId = resolveTargetCompanyId(companyId);
+        getCompanyByIdOrThrow(targetCompanyId);
+
+        CompanyMember inviterMember = getActiveAdminOrOwnerMember(currentUser, targetCompanyId,
+                "Chỉ người sở hữu hoặc quản trị viên mới có quyền tạo tài khoản thành viên");
+
+        validateHigherPriority(inviterMember.getRole(), request.getRole(),
+                "Bạn chỉ được phép cấp tài khoản với vai trò thấp hơn mình");
+
+        User targetUser;
+        var existingUserOpt = userRepository.findByEmail(request.getEmail());
+        if (existingUserOpt.isPresent()) {
+            targetUser = existingUserOpt.get();
+        } else {
+            targetUser = new User(
+                    request.getEmail(),
+                    passwordEncoder.encode(request.getPassword()),
+                    request.getFullName(),
+                    "ROLE_USER"
+            );
+            targetUser.setCurrentCompanyId(targetCompanyId);
+            targetUser = userRepository.save(targetUser);
+        }
+
+        CompanyMember savedMember = saveOrReactivateMember(targetUser, targetCompanyId, request.getRole());
+        updateTargetUserCompanyIfNull(targetUser, targetCompanyId);
+
+        return CompanyMemberResponse.fromEntity(savedMember, targetUser);
     }
 }
