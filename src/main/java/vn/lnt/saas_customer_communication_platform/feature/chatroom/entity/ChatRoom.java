@@ -15,7 +15,16 @@ public class ChatRoom {
 
     private String name;
 
-    private String type;
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    private ChatRoomType type;
+
+    /**
+     * Khóa định danh duy nhất cho phòng DIRECT: "{companyId}:{minUserId}:{maxUserId}".
+     * Null với phòng GROUP. Ràng buộc unique đảm bảo không tạo trùng phòng DIRECT giữa 2 người.
+     */
+    @Column(name = "direct_key", unique = true, length = 100)
+    private String directKey;
 
     @Column(name = "create_by")
     private Long createBy;
@@ -60,12 +69,20 @@ public class ChatRoom {
         this.name = name;
     }
 
-    public String getType() {
+    public ChatRoomType getType() {
         return type;
     }
 
-    public void setType(String type) {
+    public void setType(ChatRoomType type) {
         this.type = type;
+    }
+
+    public String getDirectKey() {
+        return directKey;
+    }
+
+    public void setDirectKey(String directKey) {
+        this.directKey = directKey;
     }
 
     public Long getCreateBy() {
