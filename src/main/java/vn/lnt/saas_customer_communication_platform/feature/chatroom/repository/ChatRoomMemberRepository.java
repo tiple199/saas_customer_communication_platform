@@ -7,6 +7,7 @@ import vn.lnt.saas_customer_communication_platform.feature.chatroom.entity.ChatR
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 
 public interface ChatRoomMemberRepository extends JpaRepository<ChatRoomMember, Long> {
 
@@ -22,4 +23,7 @@ public interface ChatRoomMemberRepository extends JpaRepository<ChatRoomMember, 
     List<ChatRoomMember> findByUserId(Long userId);
 
     boolean existsByChatRoomIdAndUserId(Long chatRoomId, Long userId);
+
+    Optional<ChatRoomMember> findByChatRoomIdAndUserId(Long chatRoomId, Long userId);
 }
+

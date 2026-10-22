@@ -7,6 +7,7 @@ import vn.lnt.saas_customer_communication_platform.exception.InvalidOperationExc
 import vn.lnt.saas_customer_communication_platform.exception.ResourceNotFoundException;
 import vn.lnt.saas_customer_communication_platform.feature.auth.entity.User;
 import vn.lnt.saas_customer_communication_platform.feature.auth.repository.UserRepository;
+import vn.lnt.saas_customer_communication_platform.feature.chatroom.dto.AddChatRoomMemberRequest;
 import vn.lnt.saas_customer_communication_platform.feature.chatroom.dto.ChatRoomMemberResponse;
 import vn.lnt.saas_customer_communication_platform.feature.chatroom.dto.ChatRoomResponse;
 import vn.lnt.saas_customer_communication_platform.feature.chatroom.dto.CreateChatRoomRequest;
@@ -271,6 +272,17 @@ public class ChatRoomServiceImpl implements ChatRoomService {
         return toResponses(List.of(chatRoom), currentUser.getId()).get(0);
     }
 
+    private List<ChatRoomMemberResponse> getChatRoomMembersInternal(Long chatRoomId) {
+        List<ChatRoomMember> roomMembers = chatRoomMemberRepository.findByChatRoomId(chatRoomId);
+        List<Long> userIds = roomMembers.stream().map(ChatRoomMember::getUserId).collect(Collectors.toList());
+        Map<Long, User> userMap = userRepository.findAllById(userIds).stream()
+                .collect(Collectors.toMap(User::getId, Function.identity()));
+
+        return roomMembers.stream()
+                .map(m -> ChatRoomMemberResponse.fromEntity(m, userMap.get(m.getUserId())))
+                .collect(Collectors.toList());
+    }
+
     @Override
     @Transactional(readOnly = true)
     public List<ChatRoomMemberResponse> getChatRoomMembers(String currentUserEmail, Long companyId, Long chatRoomId) {
@@ -281,13 +293,93 @@ public class ChatRoomServiceImpl implements ChatRoomService {
 
         getAccessibleChatRoom(currentUser.getId(), targetCompanyId, chatRoomId);
 
-        List<ChatRoomMember> roomMembers = chatRoomMemberRepository.findByChatRoomId(chatRoomId);
-        List<Long> userIds = roomMembers.stream().map(ChatRoomMember::getUserId).collect(Collectors.toList());
-        Map<Long, User> userMap = userRepository.findAllById(userIds).stream()
-                .collect(Collectors.toMap(User::getId, Function.identity()));
+        return getChatRoomMembersInternal(chatRoomId);
+    }
 
-        return roomMembers.stream()
-                .map(m -> ChatRoomMemberResponse.fromEntity(m, userMap.get(m.getUserId())))
-                .collect(Collectors.toList());
+    @Override
+    @Transactional
+    public void addMembers(String currentUserEmail, Long companyId, Long chatRoomId, AddChatRoomMemberRequest request) {
+        User currentUser = getUserByEmail(currentUserEmail);
+        Long targetCompanyId = resolveTargetCompanyId(companyId);
+
+        validateActiveCompanyMember(currentUser.getId(), targetCompanyId);
+
+        ChatRoom chatRoom = getAccessibleChatRoom(currentUser.getId(), targetCompanyId, chatRoomId);
+
+        if (chatRoom.getType() != ChatRoomType.GROUP) {
+            throw new InvalidOperationException("Chỉ có thể thêm thành viên vào phòng chat nhóm");
+        }
+
+        if (request == null || request.getUserIds() == null || request.getUserIds().isEmpty()) {
+            throw new InvalidOperationException("Danh sách thành viên cần thêm không được để trống");
+        }
+
+        Set<Long> uniqueUserIds = request.getUserIds().stream()
+                .filter(Objects::nonNull)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+
+        if (uniqueUserIds.isEmpty()) {
+            throw new InvalidOperationException("Danh sách thành viên cần thêm không được để trống");
+        }
+
+        List<Long> toAdd = new ArrayList<>();
+        for (Long userId : uniqueUserIds) {
+            if (!companyMemberRepository.existsByIdUserIdAndIdCompanyIdAndStatus(
+                    userId, targetCompanyId, CompanyMemberStatus.ACTIVE)) {
+                throw new InvalidOperationException("Người dùng với ID " + userId + " không phải thành viên đang hoạt động của công ty");
+            }
+            if (!chatRoomMemberRepository.existsByChatRoomIdAndUserId(chatRoomId, userId)) {
+                toAdd.add(userId);
+            }
+        }
+
+        if (toAdd.isEmpty()) {
+            throw new InvalidOperationException("Tất cả người dùng được chọn đã là thành viên của phòng chat");
+        }
+
+        for (Long userId : toAdd) {
+            addMember(chatRoom, userId);
+        }
+    }
+
+    @Override
+    @Transactional
+    public void removeMember(String currentUserEmail, Long companyId, Long chatRoomId, Long targetUserId) {
+        if (targetUserId == null) {
+            throw new InvalidOperationException("Vui lòng chọn thành viên cần xóa");
+        }
+
+        User currentUser = getUserByEmail(currentUserEmail);
+        Long targetCompanyId = resolveTargetCompanyId(companyId);
+
+        validateActiveCompanyMember(currentUser.getId(), targetCompanyId);
+
+        ChatRoom chatRoom = getAccessibleChatRoom(currentUser.getId(), targetCompanyId, chatRoomId);
+
+        if (chatRoom.getType() != ChatRoomType.GROUP) {
+            throw new InvalidOperationException("Chỉ có thể xóa thành viên khỏi phòng chat nhóm");
+        }
+
+        ChatRoomMember memberToRemove = chatRoomMemberRepository.findByChatRoomIdAndUserId(chatRoomId, targetUserId)
+                .orElseThrow(() -> new InvalidOperationException("Người dùng này không phải là thành viên của phòng chat"));
+
+        boolean isSelf = currentUser.getId().equals(targetUserId);
+        boolean isCreator = chatRoom.getCreateBy() != null && chatRoom.getCreateBy().equals(currentUser.getId());
+        boolean targetIsCreator = chatRoom.getCreateBy() != null && chatRoom.getCreateBy().equals(targetUserId);
+
+        if (isSelf) {
+            if (targetIsCreator) {
+                throw new InvalidOperationException("Người tạo nhóm không thể tự rời nhóm");
+            }
+        } else {
+            if (!isCreator) {
+                throw new InvalidOperationException("Chỉ người tạo nhóm mới có quyền xóa thành viên khác khỏi nhóm");
+            }
+            if (targetIsCreator) {
+                throw new InvalidOperationException("Không thể xóa người tạo nhóm khỏi phòng chat");
+            }
+        }
+
+        chatRoomMemberRepository.delete(memberToRemove);
     }
 }

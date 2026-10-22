@@ -7,6 +7,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
 import vn.lnt.saas_customer_communication_platform.dto.ApiResponse;
+import vn.lnt.saas_customer_communication_platform.feature.chatroom.dto.AddChatRoomMemberRequest;
 import vn.lnt.saas_customer_communication_platform.feature.chatroom.dto.ChatRoomMemberResponse;
 import vn.lnt.saas_customer_communication_platform.feature.chatroom.dto.ChatRoomResponse;
 import vn.lnt.saas_customer_communication_platform.feature.chatroom.dto.CreateChatRoomRequest;
@@ -73,4 +74,27 @@ public class ChatRoomController {
         List<ChatRoomMemberResponse> response = chatRoomService.getChatRoomMembers(currentUserEmail, companyId, id);
         return ResponseEntity.ok(ApiResponse.success("Lấy danh sách thành viên phòng chat thành công", response));
     }
+
+    @PostMapping("/{id}/members")
+    public ResponseEntity<ApiResponse<Void>> addMembers(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestParam(required = false) Long companyId,
+            @PathVariable Long id,
+            @Valid @RequestBody AddChatRoomMemberRequest request) {
+        String currentUserEmail = jwt != null ? jwt.getSubject() : null;
+        chatRoomService.addMembers(currentUserEmail, companyId, id, request);
+        return ResponseEntity.ok(ApiResponse.success("Thêm thành viên vào nhóm thành công", null));
+    }
+
+    @DeleteMapping("/{id}/members/{targetUserId}")
+    public ResponseEntity<ApiResponse<Void>> removeMember(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestParam(required = false) Long companyId,
+            @PathVariable Long id,
+            @PathVariable Long targetUserId) {
+        String currentUserEmail = jwt != null ? jwt.getSubject() : null;
+        chatRoomService.removeMember(currentUserEmail, companyId, id, targetUserId);
+        return ResponseEntity.ok(ApiResponse.success("Xóa thành viên khỏi nhóm chat thành công", null));
+    }
 }
+
