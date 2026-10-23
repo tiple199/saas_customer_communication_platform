@@ -7,10 +7,8 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
 import vn.lnt.saas_customer_communication_platform.dto.ApiResponse;
-import vn.lnt.saas_customer_communication_platform.feature.chatroom.dto.AddChatRoomMemberRequest;
-import vn.lnt.saas_customer_communication_platform.feature.chatroom.dto.ChatRoomMemberResponse;
-import vn.lnt.saas_customer_communication_platform.feature.chatroom.dto.ChatRoomResponse;
-import vn.lnt.saas_customer_communication_platform.feature.chatroom.dto.CreateChatRoomRequest;
+import vn.lnt.saas_customer_communication_platform.dto.PageResponse;
+import vn.lnt.saas_customer_communication_platform.feature.chatroom.dto.*;
 import vn.lnt.saas_customer_communication_platform.feature.chatroom.service.ChatRoomService;
 
 import java.util.List;
@@ -95,6 +93,30 @@ public class ChatRoomController {
         String currentUserEmail = jwt != null ? jwt.getSubject() : null;
         chatRoomService.removeMember(currentUserEmail, companyId, id, targetUserId);
         return ResponseEntity.ok(ApiResponse.success("Xóa thành viên khỏi nhóm chat thành công", null));
+    }
+
+    @PostMapping("/{id}/messages")
+    public ResponseEntity<ApiResponse<InternalMessageResponse>> sendMessage(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestParam(required = false) Long companyId,
+            @PathVariable Long id,
+            @Valid @RequestBody SendMessageRequest request) {
+        String currentUserEmail = jwt != null ? jwt.getSubject() : null;
+        InternalMessageResponse response = chatRoomService.sendMessage(currentUserEmail, companyId, id, request);
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.created("Gửi tin nhắn thành công", response));
+    }
+
+    @GetMapping("/{id}/messages")
+    public ResponseEntity<ApiResponse<PageResponse<InternalMessageResponse>>> getChatRoomMessages(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestParam(required = false) Long companyId,
+            @PathVariable Long id,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        String currentUserEmail = jwt != null ? jwt.getSubject() : null;
+        PageResponse<InternalMessageResponse> response = chatRoomService.getChatRoomMessages(currentUserEmail, companyId, id, page, size);
+        return ResponseEntity.ok(ApiResponse.success("Lấy danh sách tin nhắn thành công", response));
     }
 }
 

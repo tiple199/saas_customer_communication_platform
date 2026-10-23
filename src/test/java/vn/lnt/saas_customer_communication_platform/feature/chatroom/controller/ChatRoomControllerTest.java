@@ -61,6 +61,8 @@ class ChatRoomControllerTest {
         companyService.addMember("chatowner@example.com", comp.getId(),
                 new vn.lnt.saas_customer_communication_platform.feature.company.dto.AddMemberRequest("chatmember@example.com", vn.lnt.saas_customer_communication_platform.feature.company.entity.CompanyMemberRole.STAFF));
 
+        companyService.switchCompany("chatowner@example.com", comp.getId());
+
         User chatMember = userRepository.findByEmail("chatmember@example.com").orElseThrow();
 
         String createRoomJson = String.format("""
@@ -73,29 +75,30 @@ class ChatRoomControllerTest {
 
         String resStr = mockMvc.perform(post("/api/v1/chat-rooms")
                         .with(jwt().jwt(builder -> builder.subject("chatowner@example.com")))
+                        .param("companyId", comp.getId().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(createRoomJson))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.statusCode").value(201))
                 .andExpect(jsonPath("$.data.name").value("Team Dev Chat"))
                 .andExpect(jsonPath("$.data.type").value("GROUP"))
-                .andExpect(jsonPath("$.data.name").value("Team Dev Chat"))
                 .andReturn().getResponse().getContentAsString();
 
         Object roomIdObj = com.jayway.jsonpath.JsonPath.read(resStr, "$.data.id");
 
         // Test get my chat rooms
         mockMvc.perform(get("/api/v1/chat-rooms")
-                        .with(jwt().jwt(builder -> builder.subject("chatowner@example.com"))))
+                        .with(jwt().jwt(builder -> builder.subject("chatowner@example.com")))
+                        .param("companyId", comp.getId().toString()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.statusCode").value(200))
                 .andExpect(jsonPath("$.data", hasSize(1)))
-                .andExpect(jsonPath("$.data[0].name").value("Team Dev Chat"))
                 .andExpect(jsonPath("$.data[0].name").value("Team Dev Chat"));
 
         // Test get chat room by ID
         mockMvc.perform(get("/api/v1/chat-rooms/" + roomIdObj)
-                        .with(jwt().jwt(builder -> builder.subject("chatowner@example.com"))))
+                        .with(jwt().jwt(builder -> builder.subject("chatowner@example.com")))
+                        .param("companyId", comp.getId().toString()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.statusCode").value(200))
                 .andExpect(jsonPath("$.data.name").value("Team Dev Chat"))
@@ -103,7 +106,8 @@ class ChatRoomControllerTest {
 
         // Test get chat room members
         mockMvc.perform(get("/api/v1/chat-rooms/" + roomIdObj + "/members")
-                        .with(jwt().jwt(builder -> builder.subject("chatowner@example.com"))))
+                        .with(jwt().jwt(builder -> builder.subject("chatowner@example.com")))
+                        .param("companyId", comp.getId().toString()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.statusCode").value(200))
                 .andExpect(jsonPath("$.data", hasSize(2)));
@@ -209,6 +213,96 @@ class ChatRoomControllerTest {
                         .with(jwt().jwt(builder -> builder.subject("chatowner@example.com"))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data", hasSize(1)));
+    }
+
+    @Test
+    void sendMessageAndGetMessagesTest() throws Exception {
+        User member = userRepository.findByEmail("chatmember@example.com").orElseThrow();
+
+        vn.lnt.saas_customer_communication_platform.feature.company.dto.CompanyResponse comp =
+                companyService.createCompany("chatowner@example.com", new CreateCompanyRequest("Message Corp"));
+
+        companyService.addMember("chatowner@example.com", comp.getId(),
+                new vn.lnt.saas_customer_communication_platform.feature.company.dto.AddMemberRequest("chatmember@example.com", vn.lnt.saas_customer_communication_platform.feature.company.entity.CompanyMemberRole.STAFF));
+
+        companyService.switchCompany("chatowner@example.com", comp.getId());
+        companyService.switchCompany("chatmember@example.com", comp.getId());
+
+        // Create GROUP room
+        String createJson = String.format("""
+                {
+                    "name": "General Chat",
+                    "type": "GROUP",
+                    "memberUserIds": [%d]
+                }
+                """, member.getId());
+
+        String resStr = mockMvc.perform(post("/api/v1/chat-rooms")
+                        .with(jwt().jwt(builder -> builder.subject("chatowner@example.com")))
+                        .param("companyId", comp.getId().toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(createJson))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+
+        Object roomId = com.jayway.jsonpath.JsonPath.read(resStr, "$.data.id");
+
+        // 1. Chatowner sends message
+        String sendJson1 = """
+                {
+                    "content": "Xin chào cả nhóm!",
+                    "messageType": "TEXT"
+                }
+                """;
+        mockMvc.perform(post("/api/v1/chat-rooms/" + roomId + "/messages")
+                        .with(jwt().jwt(builder -> builder.subject("chatowner@example.com")))
+                        .param("companyId", comp.getId().toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(sendJson1))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.statusCode").value(201))
+                .andExpect(jsonPath("$.data.content").value("Xin chào cả nhóm!"))
+                .andExpect(jsonPath("$.data.senderId").isNotEmpty());
+
+        // 2. Chatmember sends reply
+        String sendJson2 = """
+                {
+                    "content": "Chào sếp!"
+                }
+                """;
+        mockMvc.perform(post("/api/v1/chat-rooms/" + roomId + "/messages")
+                        .with(jwt().jwt(builder -> builder.subject("chatmember@example.com")))
+                        .param("companyId", comp.getId().toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(sendJson2))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.statusCode").value(201))
+                .andExpect(jsonPath("$.data.content").value("Chào sếp!"))
+                .andExpect(jsonPath("$.data.senderId").value(member.getId()));
+
+        // 3. Get messages in room
+        mockMvc.perform(get("/api/v1/chat-rooms/" + roomId + "/messages")
+                        .with(jwt().jwt(builder -> builder.subject("chatowner@example.com")))
+                        .param("companyId", comp.getId().toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.statusCode").value(200))
+                .andExpect(jsonPath("$.data.totalElements").value(2))
+                .andExpect(jsonPath("$.data.items", hasSize(2)))
+                .andExpect(jsonPath("$.data.items[0].content").value("Chào sếp!"))
+                .andExpect(jsonPath("$.data.items[1].content").value("Xin chào cả nhóm!"));
+
+        // 4. Blank message fails
+        String blankJson = """
+                {
+                    "content": "   "
+                }
+                """;
+        mockMvc.perform(post("/api/v1/chat-rooms/" + roomId + "/messages")
+                        .with(jwt().jwt(builder -> builder.subject("chatowner@example.com")))
+                        .param("companyId", comp.getId().toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(blankJson))
+                .andExpect(status().isBadRequest());
     }
 }
 

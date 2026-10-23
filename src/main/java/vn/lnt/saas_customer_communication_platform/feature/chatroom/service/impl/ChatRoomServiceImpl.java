@@ -1,21 +1,26 @@
 package vn.lnt.saas_customer_communication_platform.feature.chatroom.service.impl;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import vn.lnt.saas_customer_communication_platform.config.tenant.TenantContext;
+import vn.lnt.saas_customer_communication_platform.dto.PageResponse;
 import vn.lnt.saas_customer_communication_platform.exception.InvalidOperationException;
 import vn.lnt.saas_customer_communication_platform.exception.ResourceNotFoundException;
 import vn.lnt.saas_customer_communication_platform.feature.auth.entity.User;
 import vn.lnt.saas_customer_communication_platform.feature.auth.repository.UserRepository;
-import vn.lnt.saas_customer_communication_platform.feature.chatroom.dto.AddChatRoomMemberRequest;
-import vn.lnt.saas_customer_communication_platform.feature.chatroom.dto.ChatRoomMemberResponse;
-import vn.lnt.saas_customer_communication_platform.feature.chatroom.dto.ChatRoomResponse;
-import vn.lnt.saas_customer_communication_platform.feature.chatroom.dto.CreateChatRoomRequest;
+import vn.lnt.saas_customer_communication_platform.feature.chatroom.dto.*;
 import vn.lnt.saas_customer_communication_platform.feature.chatroom.entity.ChatRoom;
 import vn.lnt.saas_customer_communication_platform.feature.chatroom.entity.ChatRoomMember;
 import vn.lnt.saas_customer_communication_platform.feature.chatroom.entity.ChatRoomType;
+import vn.lnt.saas_customer_communication_platform.feature.chatroom.entity.InternalMessage;
 import vn.lnt.saas_customer_communication_platform.feature.chatroom.repository.ChatRoomMemberRepository;
 import vn.lnt.saas_customer_communication_platform.feature.chatroom.repository.ChatRoomRepository;
+import vn.lnt.saas_customer_communication_platform.feature.chatroom.repository.InternalMessageRepository;
 import vn.lnt.saas_customer_communication_platform.feature.chatroom.service.ChatRoomService;
 import vn.lnt.saas_customer_communication_platform.feature.company.entity.Company;
 import vn.lnt.saas_customer_communication_platform.feature.company.entity.CompanyMember;
@@ -23,6 +28,7 @@ import vn.lnt.saas_customer_communication_platform.feature.company.entity.Compan
 import vn.lnt.saas_customer_communication_platform.feature.company.repository.CompanyMemberRepository;
 import vn.lnt.saas_customer_communication_platform.feature.company.repository.CompanyRepository;
 
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -32,20 +38,26 @@ public class ChatRoomServiceImpl implements ChatRoomService {
 
     private final ChatRoomRepository chatRoomRepository;
     private final ChatRoomMemberRepository chatRoomMemberRepository;
+    private final InternalMessageRepository internalMessageRepository;
     private final CompanyRepository companyRepository;
     private final CompanyMemberRepository companyMemberRepository;
     private final UserRepository userRepository;
+    private final SimpMessagingTemplate messagingTemplate;
 
     public ChatRoomServiceImpl(ChatRoomRepository chatRoomRepository,
                                ChatRoomMemberRepository chatRoomMemberRepository,
+                               InternalMessageRepository internalMessageRepository,
                                CompanyRepository companyRepository,
                                CompanyMemberRepository companyMemberRepository,
-                               UserRepository userRepository) {
+                               UserRepository userRepository,
+                               SimpMessagingTemplate messagingTemplate) {
         this.chatRoomRepository = chatRoomRepository;
         this.chatRoomMemberRepository = chatRoomMemberRepository;
+        this.internalMessageRepository = internalMessageRepository;
         this.companyRepository = companyRepository;
         this.companyMemberRepository = companyMemberRepository;
         this.userRepository = userRepository;
+        this.messagingTemplate = messagingTemplate;
     }
 
     private User getUserByEmail(String email) {
@@ -381,5 +393,77 @@ public class ChatRoomServiceImpl implements ChatRoomService {
         }
 
         chatRoomMemberRepository.delete(memberToRemove);
+    }
+
+    @Override
+    @Transactional
+    public InternalMessageResponse sendMessage(String currentUserEmail, Long companyId, Long chatRoomId, SendMessageRequest request) {
+        if (request == null || request.getContent() == null || request.getContent().trim().isEmpty()) {
+            throw new InvalidOperationException("Nội dung tin nhắn không được để trống");
+        }
+
+        User currentUser = getUserByEmail(currentUserEmail);
+        Long targetCompanyId = resolveTargetCompanyId(companyId);
+
+        validateActiveCompanyMember(currentUser.getId(), targetCompanyId);
+
+        ChatRoom chatRoom = getAccessibleChatRoom(currentUser.getId(), targetCompanyId, chatRoomId);
+
+        InternalMessage message = new InternalMessage();
+        message.setSenderId(currentUser.getId());
+        message.setContent(request.getContent().trim());
+        message.setMessageType(request.getMessageType() != null && !request.getMessageType().trim().isEmpty()
+                ? request.getMessageType().trim() : "TEXT");
+        message.setChatRoom(chatRoom);
+
+        InternalMessage savedMessage = internalMessageRepository.save(message);
+
+        // Cập nhật thời điểm cập nhật mới nhất cho phòng chat
+        chatRoom.setUpdatedAt(LocalDateTime.now());
+        chatRoomRepository.save(chatRoom);
+
+        // Cập nhật tin nhắn đã đọc gần nhất cho chính người gửi
+        chatRoomMemberRepository.findByChatRoomIdAndUserId(chatRoomId, currentUser.getId())
+                .ifPresent(m -> {
+                    m.setLastReadMessageId(savedMessage.getId());
+                    chatRoomMemberRepository.save(m);
+                });
+
+        InternalMessageResponse response = InternalMessageResponse.fromEntity(savedMessage);
+
+        // Phát realtime tin nhắn tới tất cả client đang lắng nghe phòng chat
+        try {
+            messagingTemplate.convertAndSend("/topic/chat-rooms/" + chatRoomId, response);
+        } catch (Exception ignored) {
+        }
+
+        return response;
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public PageResponse<InternalMessageResponse> getChatRoomMessages(String currentUserEmail, Long companyId, Long chatRoomId, int page, int size) {
+        User currentUser = getUserByEmail(currentUserEmail);
+        Long targetCompanyId = resolveTargetCompanyId(companyId);
+
+        validateActiveCompanyMember(currentUser.getId(), targetCompanyId);
+
+        getAccessibleChatRoom(currentUser.getId(), targetCompanyId, chatRoomId);
+
+        int validPage = Math.max(page, 0);
+        int validSize = size <= 0 ? 20 : Math.min(size, 100);
+
+        Pageable pageable = PageRequest.of(validPage, validSize, Sort.by(Sort.Direction.DESC, "createdAt"));
+        Page<InternalMessage> messagePage = internalMessageRepository.findByChatRoomId(chatRoomId, pageable);
+
+        if (messagePage.isEmpty()) {
+            return new PageResponse<>(List.of(), messagePage.getNumber(), messagePage.getSize(), 0, 0);
+        }
+
+        List<InternalMessageResponse> items = messagePage.getContent().stream()
+                .map(InternalMessageResponse::fromEntity)
+                .collect(Collectors.toList());
+
+        return new PageResponse<>(items, messagePage.getNumber(), messagePage.getSize(), messagePage.getTotalElements(), messagePage.getTotalPages());
     }
 }
