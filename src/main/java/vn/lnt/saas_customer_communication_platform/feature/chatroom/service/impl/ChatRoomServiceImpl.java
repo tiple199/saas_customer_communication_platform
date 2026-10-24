@@ -137,10 +137,25 @@ public class ChatRoomServiceImpl implements ChatRoomService {
         }
 
         final Map<Long, User> partners = partnerMap;
+
+        List<Long> allRoomIds = rooms.stream().map(ChatRoom::getId).collect(Collectors.toList());
+        Map<Long, Long> unreadCountMap = new HashMap<>();
+        if (!allRoomIds.isEmpty()) {
+            for (Object[] row : internalMessageRepository.countUnreadPerRoom(allRoomIds, currentUserId)) {
+                Long rId = (Long) row[0];
+                Long cnt = (Long) row[1];
+                unreadCountMap.put(rId, cnt);
+            }
+        }
+
         return rooms.stream()
-                .map(room -> room.getType() == ChatRoomType.DIRECT
-                        ? ChatRoomResponse.fromEntity(room, partners.get(partnerIdByRoom.get(room.getId())))
-                        : ChatRoomResponse.fromEntity(room))
+                .map(room -> {
+                    ChatRoomResponse response = room.getType() == ChatRoomType.DIRECT
+                            ? ChatRoomResponse.fromEntity(room, partners.get(partnerIdByRoom.get(room.getId())))
+                            : ChatRoomResponse.fromEntity(room);
+                    response.setUnreadCount(unreadCountMap.getOrDefault(room.getId(), 0L));
+                    return response;
+                })
                 .collect(Collectors.toList());
     }
 
@@ -465,5 +480,40 @@ public class ChatRoomServiceImpl implements ChatRoomService {
                 .collect(Collectors.toList());
 
         return new PageResponse<>(items, messagePage.getNumber(), messagePage.getSize(), messagePage.getTotalElements(), messagePage.getTotalPages());
+    }
+
+    @Override
+    @Transactional
+    public void markAsRead(String currentUserEmail, Long companyId, Long chatRoomId, Long messageId) {
+        User currentUser = getUserByEmail(currentUserEmail);
+        Long targetCompanyId = resolveTargetCompanyId(companyId);
+
+        validateActiveCompanyMember(currentUser.getId(), targetCompanyId);
+
+        getAccessibleChatRoom(currentUser.getId(), targetCompanyId, chatRoomId);
+
+        ChatRoomMember member = chatRoomMemberRepository.findByChatRoomIdAndUserId(chatRoomId, currentUser.getId())
+                .orElseThrow(() -> new InvalidOperationException("Bạn không phải là thành viên của phòng chat"));
+
+        Long targetMsgId;
+        if (messageId == null) {
+            Optional<InternalMessage> latestOpt = internalMessageRepository.findTopByChatRoomIdOrderByIdDesc(chatRoomId);
+            if (latestOpt.isEmpty()) {
+                return;
+            }
+            targetMsgId = latestOpt.get().getId();
+        } else {
+            InternalMessage msg = internalMessageRepository.findById(messageId)
+                    .orElseThrow(() -> new ResourceNotFoundException("InternalMessage", "id", messageId));
+            if (msg.getChatRoom() == null || !chatRoomId.equals(msg.getChatRoom().getId())) {
+                throw new InvalidOperationException("Tin nhắn không thuộc phòng chat này");
+            }
+            targetMsgId = messageId;
+        }
+
+        if (member.getLastReadMessageId() == null || member.getLastReadMessageId() < targetMsgId) {
+            member.setLastReadMessageId(targetMsgId);
+            chatRoomMemberRepository.save(member);
+        }
     }
 }

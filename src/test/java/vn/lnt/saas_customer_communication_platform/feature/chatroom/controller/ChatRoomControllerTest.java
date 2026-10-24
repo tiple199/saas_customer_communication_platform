@@ -304,5 +304,81 @@ class ChatRoomControllerTest {
                         .content(blankJson))
                 .andExpect(status().isBadRequest());
     }
+
+    @Test
+    void markAsReadAndUnreadCountTest() throws Exception {
+        User member = userRepository.findByEmail("chatmember@example.com").orElseThrow();
+
+        vn.lnt.saas_customer_communication_platform.feature.company.dto.CompanyResponse comp =
+                companyService.createCompany("chatowner@example.com", new CreateCompanyRequest("Read Corp"));
+
+        companyService.addMember("chatowner@example.com", comp.getId(),
+                new vn.lnt.saas_customer_communication_platform.feature.company.dto.AddMemberRequest("chatmember@example.com", vn.lnt.saas_customer_communication_platform.feature.company.entity.CompanyMemberRole.STAFF));
+
+        companyService.switchCompany("chatowner@example.com", comp.getId());
+        companyService.switchCompany("chatmember@example.com", comp.getId());
+
+        // Create GROUP room
+        String createJson = String.format("""
+                {
+                    "name": "Project Alpha",
+                    "type": "GROUP",
+                    "memberUserIds": [%d]
+                }
+                """, member.getId());
+
+        String resStr = mockMvc.perform(post("/api/v1/chat-rooms")
+                        .with(jwt().jwt(builder -> builder.subject("chatowner@example.com")))
+                        .param("companyId", comp.getId().toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(createJson))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+
+        Object roomId = com.jayway.jsonpath.JsonPath.read(resStr, "$.data.id");
+
+        // 1. Chatowner sends 2 messages
+        mockMvc.perform(post("/api/v1/chat-rooms/" + roomId + "/messages")
+                        .with(jwt().jwt(builder -> builder.subject("chatowner@example.com")))
+                        .param("companyId", comp.getId().toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"content\": \"Message 1\"}"))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(post("/api/v1/chat-rooms/" + roomId + "/messages")
+                        .with(jwt().jwt(builder -> builder.subject("chatowner@example.com")))
+                        .param("companyId", comp.getId().toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"content\": \"Message 2\"}"))
+                .andExpect(status().isCreated());
+
+        // 2. Chatowner sent them, so chatowner unreadCount should be 0
+        mockMvc.perform(get("/api/v1/chat-rooms")
+                        .with(jwt().jwt(builder -> builder.subject("chatowner@example.com")))
+                        .param("companyId", comp.getId().toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].unreadCount").value(0));
+
+        // 3. Chatmember has NOT read them yet -> unreadCount should be 2
+        mockMvc.perform(get("/api/v1/chat-rooms")
+                        .with(jwt().jwt(builder -> builder.subject("chatmember@example.com")))
+                        .param("companyId", comp.getId().toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].unreadCount").value(2));
+
+        // 4. Chatmember marks room as read
+        mockMvc.perform(post("/api/v1/chat-rooms/" + roomId + "/read")
+                        .with(jwt().jwt(builder -> builder.subject("chatmember@example.com")))
+                        .param("companyId", comp.getId().toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.statusCode").value(200));
+
+        // 5. Chatmember unreadCount is now 0
+        mockMvc.perform(get("/api/v1/chat-rooms")
+                        .with(jwt().jwt(builder -> builder.subject("chatmember@example.com")))
+                        .param("companyId", comp.getId().toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].unreadCount").value(0));
+    }
 }
 

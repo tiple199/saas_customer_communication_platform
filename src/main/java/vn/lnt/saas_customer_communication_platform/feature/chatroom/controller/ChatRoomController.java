@@ -118,5 +118,16 @@ public class ChatRoomController {
         PageResponse<InternalMessageResponse> response = chatRoomService.getChatRoomMessages(currentUserEmail, companyId, id, page, size);
         return ResponseEntity.ok(ApiResponse.success("Lấy danh sách tin nhắn thành công", response));
     }
+
+    @PostMapping("/{id}/read")
+    public ResponseEntity<ApiResponse<Void>> markAsRead(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestParam(required = false) Long companyId,
+            @PathVariable Long id,
+            @RequestParam(required = false) Long messageId) {
+        String currentUserEmail = jwt != null ? jwt.getSubject() : null;
+        chatRoomService.markAsRead(currentUserEmail, companyId, id, messageId);
+        return ResponseEntity.ok(ApiResponse.success("Đánh dấu đã đọc thành công", null));
+    }
 }
 

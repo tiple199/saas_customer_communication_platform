@@ -25,6 +25,11 @@ public class ChatRoomResponse {
      */
     private Long partnerUserId;
 
+    /**
+     * Số tin nhắn chưa đọc của người dùng hiện tại trong phòng.
+     */
+    private Long unreadCount = 0L;
+
     public ChatRoomResponse() {
     }
 
@@ -136,5 +141,13 @@ public class ChatRoomResponse {
 
     public void setUpdatedAt(LocalDateTime updatedAt) {
         this.updatedAt = updatedAt;
+    }
+
+    public Long getUnreadCount() {
+        return unreadCount;
+    }
+
+    public void setUnreadCount(Long unreadCount) {
+        this.unreadCount = unreadCount;
     }
 }

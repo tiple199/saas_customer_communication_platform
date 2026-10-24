@@ -40,5 +40,11 @@ public interface ChatRoomService {
      * Lấy danh sách tin nhắn trong phòng chat theo phân trang.
      */
     PageResponse<InternalMessageResponse> getChatRoomMessages(String currentUserEmail, Long companyId, Long chatRoomId, int page, int size);
+
+    /**
+     * Đánh dấu đã đọc tin nhắn trong phòng chat.
+     * Nếu messageId == null, sẽ đánh dấu đã đọc đến tin nhắn mới nhất trong phòng.
+     */
+    void markAsRead(String currentUserEmail, Long companyId, Long chatRoomId, Long messageId);
 }
 

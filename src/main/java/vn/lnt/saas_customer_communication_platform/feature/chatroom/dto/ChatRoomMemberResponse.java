@@ -13,6 +13,7 @@ public class ChatRoomMemberResponse {
     private String email;
     private String avatarUrl;
     private LocalDateTime joinAt;
+    private Long lastReadMessageId;
 
     public ChatRoomMemberResponse() {
     }
@@ -27,7 +28,7 @@ public class ChatRoomMemberResponse {
     }
 
     public static ChatRoomMemberResponse fromEntity(ChatRoomMember member, User user) {
-        return new ChatRoomMemberResponse(
+        ChatRoomMemberResponse response = new ChatRoomMemberResponse(
                 member.getId(),
                 member.getUserId(),
                 user != null ? user.getFullName() : null,
@@ -35,6 +36,8 @@ public class ChatRoomMemberResponse {
                 user != null ? user.getAvatarUrl() : null,
                 member.getJoinAt()
         );
+        response.setLastReadMessageId(member.getLastReadMessageId());
+        return response;
     }
 
     public Long getId() {
@@ -83,5 +86,13 @@ public class ChatRoomMemberResponse {
 
     public void setJoinAt(LocalDateTime joinAt) {
         this.joinAt = joinAt;
+    }
+
+    public Long getLastReadMessageId() {
+        return lastReadMessageId;
+    }
+
+    public void setLastReadMessageId(Long lastReadMessageId) {
+        this.lastReadMessageId = lastReadMessageId;
     }
 }
