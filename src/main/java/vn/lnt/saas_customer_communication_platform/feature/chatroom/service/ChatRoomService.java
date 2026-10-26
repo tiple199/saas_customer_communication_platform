@@ -1,5 +1,6 @@
 package vn.lnt.saas_customer_communication_platform.feature.chatroom.service;
 
+import org.springframework.data.domain.Pageable;
 import vn.lnt.saas_customer_communication_platform.dto.PageResponse;
 import vn.lnt.saas_customer_communication_platform.feature.chatroom.dto.*;
 
@@ -39,7 +40,7 @@ public interface ChatRoomService {
     /**
      * Lấy danh sách tin nhắn trong phòng chat theo phân trang.
      */
-    PageResponse<InternalMessageResponse> getChatRoomMessages(String currentUserEmail, Long companyId, Long chatRoomId, int page, int size);
+    PageResponse<InternalMessageResponse> getChatRoomMessages(String currentUserEmail, Long companyId, Long chatRoomId, Pageable pageable);
 
     /**
      * Đánh dấu đã đọc tin nhắn trong phòng chat.

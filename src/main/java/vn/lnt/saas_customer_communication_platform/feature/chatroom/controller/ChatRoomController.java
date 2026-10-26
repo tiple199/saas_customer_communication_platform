@@ -1,6 +1,9 @@
 package vn.lnt.saas_customer_communication_platform.feature.chatroom.controller;
 
 import jakarta.validation.Valid;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -112,10 +115,9 @@ public class ChatRoomController {
             @AuthenticationPrincipal Jwt jwt,
             @RequestParam(required = false) Long companyId,
             @PathVariable Long id,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size) {
+            @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
         String currentUserEmail = jwt != null ? jwt.getSubject() : null;
-        PageResponse<InternalMessageResponse> response = chatRoomService.getChatRoomMessages(currentUserEmail, companyId, id, page, size);
+        PageResponse<InternalMessageResponse> response = chatRoomService.getChatRoomMessages(currentUserEmail, companyId, id, pageable);
         return ResponseEntity.ok(ApiResponse.success("Lấy danh sách tin nhắn thành công", response));
     }
 

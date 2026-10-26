@@ -457,7 +457,7 @@ public class ChatRoomServiceImpl implements ChatRoomService {
 
     @Override
     @Transactional(readOnly = true)
-    public PageResponse<InternalMessageResponse> getChatRoomMessages(String currentUserEmail, Long companyId, Long chatRoomId, int page, int size) {
+    public PageResponse<InternalMessageResponse> getChatRoomMessages(String currentUserEmail, Long companyId, Long chatRoomId, Pageable pageable) {
         User currentUser = getUserByEmail(currentUserEmail);
         Long targetCompanyId = resolveTargetCompanyId(companyId);
 
@@ -465,11 +465,12 @@ public class ChatRoomServiceImpl implements ChatRoomService {
 
         getAccessibleChatRoom(currentUser.getId(), targetCompanyId, chatRoomId);
 
-        int validPage = Math.max(page, 0);
-        int validSize = size <= 0 ? 20 : Math.min(size, 100);
+        int validPage = Math.max(pageable.getPageNumber(), 0);
+        int validSize = pageable.getPageSize() <= 0 ? 20 : Math.min(pageable.getPageSize(), 100);
+        Sort sort = pageable.getSort().isSorted() ? pageable.getSort() : Sort.by(Sort.Direction.DESC, "createdAt");
+        Pageable safePageable = PageRequest.of(validPage, validSize, sort);
 
-        Pageable pageable = PageRequest.of(validPage, validSize, Sort.by(Sort.Direction.DESC, "createdAt"));
-        Page<InternalMessage> messagePage = internalMessageRepository.findByChatRoomId(chatRoomId, pageable);
+        Page<InternalMessage> messagePage = internalMessageRepository.findByChatRoomId(chatRoomId, safePageable);
 
         if (messagePage.isEmpty()) {
             return new PageResponse<>(List.of(), messagePage.getNumber(), messagePage.getSize(), 0, 0);
