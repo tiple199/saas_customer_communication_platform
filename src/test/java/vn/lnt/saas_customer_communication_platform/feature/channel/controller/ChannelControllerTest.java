@@ -65,7 +65,9 @@ class ChannelControllerTest {
                 {
                     "name": "Livechat Widget",
                     "type": "WEB",
-                    "config": "{\\"theme\\": \\"blue\\"}"
+                    "config": {
+                        "welcomeMessage": "Xin chào"
+                    }
                 }
                 """;
 
@@ -79,6 +81,8 @@ class ChannelControllerTest {
                 .andExpect(jsonPath("$.data.name").value("Livechat Widget"))
                 .andExpect(jsonPath("$.data.type").value("WEB"))
                 .andExpect(jsonPath("$.data.status").value("ACTIVE"))
+                .andExpect(jsonPath("$.data.config.welcomeMessage").value("Xin chào"))
+                .andExpect(jsonPath("$.data.config.widgetKey").isNotEmpty())
                 .andReturn().getResponse().getContentAsString();
 
         // Extract channel id
@@ -92,7 +96,8 @@ class ChannelControllerTest {
                         .param("companyId", companyId.toString()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.statusCode").value(200))
-                .andExpect(jsonPath("$.data.name").value("Livechat Widget"));
+                .andExpect(jsonPath("$.data.name").value("Livechat Widget"))
+                .andExpect(jsonPath("$.data.config.widgetKey").isNotEmpty());
 
         // 3. Get Channels list
         mockMvc.perform(get("/api/v1/channels")
@@ -118,7 +123,11 @@ class ChannelControllerTest {
         String updateJson = """
                 {
                     "name": "Livechat Official",
-                    "status": "INACTIVE"
+                    "type": "TELEGRAM",
+                    "status": "INACTIVE",
+                    "config": {
+                        "botToken": "123456:ABC-DEF"
+                    }
                 }
                 """;
 
@@ -130,7 +139,9 @@ class ChannelControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.statusCode").value(200))
                 .andExpect(jsonPath("$.data.name").value("Livechat Official"))
-                .andExpect(jsonPath("$.data.status").value("INACTIVE"));
+                .andExpect(jsonPath("$.data.type").value("TELEGRAM"))
+                .andExpect(jsonPath("$.data.status").value("INACTIVE"))
+                .andExpect(jsonPath("$.data.config.botToken").value("123456:ABC-DEF"));
 
         // 5. Delete Channel
         mockMvc.perform(delete("/api/v1/channels/" + channelId)
@@ -144,6 +155,42 @@ class ChannelControllerTest {
                         .with(jwt().jwt(j -> j.subject("channelowner@example.com")))
                         .param("companyId", companyId.toString()))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void createTelegramChannelSuccessTest() throws Exception {
+        String createJson = """
+                {
+                    "name": "Telegram Bot Channel",
+                    "type": "TELEGRAM"
+                }
+                """;
+
+        mockMvc.perform(post("/api/v1/channels")
+                        .with(jwt().jwt(j -> j.subject("channelowner@example.com")))
+                        .param("companyId", companyId.toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(createJson))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.statusCode").value(201))
+                .andExpect(jsonPath("$.data.type").value("TELEGRAM"));
+    }
+
+    @Test
+    void createChannelWithInvalidTypeFailsTest() throws Exception {
+        String invalidJson = """
+                {
+                    "name": "Invalid Channel",
+                    "type": "INVALID_TYPE_123"
+                }
+                """;
+
+        mockMvc.perform(post("/api/v1/channels")
+                        .with(jwt().jwt(j -> j.subject("channelowner@example.com")))
+                        .param("companyId", companyId.toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(invalidJson))
+                .andExpect(status().isBadRequest());
     }
 
     @Test

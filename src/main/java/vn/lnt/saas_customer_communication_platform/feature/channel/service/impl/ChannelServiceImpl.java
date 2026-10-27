@@ -24,6 +24,8 @@ import vn.lnt.saas_customer_communication_platform.feature.company.entity.Compan
 import vn.lnt.saas_customer_communication_platform.feature.company.entity.CompanyMemberStatus;
 import vn.lnt.saas_customer_communication_platform.feature.company.repository.CompanyMemberRepository;
 import vn.lnt.saas_customer_communication_platform.feature.company.repository.CompanyRepository;
+import vn.lnt.saas_customer_communication_platform.feature.channel.strategy.ChannelStrategy;
+import vn.lnt.saas_customer_communication_platform.feature.channel.strategy.ChannelStrategyFactory;
 
 import java.util.List;
 import java.util.stream.Collectors;
@@ -35,15 +37,18 @@ public class ChannelServiceImpl implements ChannelService {
     private final UserRepository userRepository;
     private final CompanyRepository companyRepository;
     private final CompanyMemberRepository companyMemberRepository;
+    private final ChannelStrategyFactory channelStrategyFactory;
 
     public ChannelServiceImpl(ChannelRepository channelRepository,
                               UserRepository userRepository,
                               CompanyRepository companyRepository,
-                              CompanyMemberRepository companyMemberRepository) {
+                              CompanyMemberRepository companyMemberRepository,
+                              ChannelStrategyFactory channelStrategyFactory) {
         this.channelRepository = channelRepository;
         this.userRepository = userRepository;
         this.companyRepository = companyRepository;
         this.companyMemberRepository = companyMemberRepository;
+        this.channelStrategyFactory = channelStrategyFactory;
     }
 
     @Override
@@ -61,12 +66,17 @@ public class ChannelServiceImpl implements ChannelService {
             throw new InvalidOperationException("Tên kênh kết nối đã tồn tại trong công ty này");
         }
 
+        // Tìm strategy tương ứng với loại channel
+        ChannelStrategy strategy = channelStrategyFactory.getStrategy(request.getType());
+
         Channel channel = new Channel();
         channel.setName(request.getName().trim());
-        channel.setType(request.getType().trim().toUpperCase());
+        channel.setType(request.getType());
         channel.setStatus("ACTIVE");
-        channel.setConfig(request.getConfig());
         channel.setCompany(company);
+
+        // Áp dụng Strategy để khởi tạo cấu hình theo loại channel
+        strategy.initChannel(channel, request);
 
         Channel savedChannel = channelRepository.save(channel);
         return ChannelResponse.fromEntity(savedChannel);
@@ -148,17 +158,17 @@ public class ChannelServiceImpl implements ChannelService {
             channel.setName(newName);
         }
 
-        if (request.getType() != null && !request.getType().isBlank()) {
-            channel.setType(request.getType().trim().toUpperCase());
+        if (request.getType() != null) {
+            channel.setType(request.getType());
         }
 
         if (request.getStatus() != null && !request.getStatus().isBlank()) {
             channel.setStatus(request.getStatus().trim().toUpperCase());
         }
 
-        if (request.getConfig() != null) {
-            channel.setConfig(request.getConfig());
-        }
+        // Áp dụng Strategy để xử lý cập nhật theo loại channel tương ứng
+        ChannelStrategy strategy = channelStrategyFactory.getStrategy(channel.getType());
+        strategy.updateChannel(channel, request);
 
         Channel updatedChannel = channelRepository.save(channel);
         return ChannelResponse.fromEntity(updatedChannel);

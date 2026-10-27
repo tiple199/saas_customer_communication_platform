@@ -16,7 +16,9 @@ public class Channel {
     @Column(nullable = false)
     private String name;
 
-    private String type;
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 30)
+    private ChannelType type;
 
     private String status;
 
@@ -69,11 +71,11 @@ public class Channel {
         this.name = name;
     }
 
-    public String getType() {
+    public ChannelType getType() {
         return type;
     }
 
-    public void setType(String type) {
+    public void setType(ChannelType type) {
         this.type = type;
     }
 

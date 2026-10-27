@@ -1,22 +1,25 @@
 package vn.lnt.saas_customer_communication_platform.feature.channel.dto;
 
 import jakarta.validation.constraints.Size;
+import vn.lnt.saas_customer_communication_platform.feature.channel.entity.ChannelType;
+
+import java.util.Map;
 
 public class UpdateChannelRequest {
 
     @Size(max = 100, message = "Tên channel tối đa 100 ký tự")
     private String name;
 
-    private String type;
+    private ChannelType type;
 
     private String status;
 
-    private String config;
+    private Map<String, Object> config;
 
     public UpdateChannelRequest() {
     }
 
-    public UpdateChannelRequest(String name, String type, String status, String config) {
+    public UpdateChannelRequest(String name, ChannelType type, String status, Map<String, Object> config) {
         this.name = name;
         this.type = type;
         this.status = status;
@@ -31,11 +34,11 @@ public class UpdateChannelRequest {
         this.name = name;
     }
 
-    public String getType() {
+    public ChannelType getType() {
         return type;
     }
 
-    public void setType(String type) {
+    public void setType(ChannelType type) {
         this.type = type;
     }
 
@@ -47,11 +50,11 @@ public class UpdateChannelRequest {
         this.status = status;
     }
 
-    public String getConfig() {
+    public Map<String, Object> getConfig() {
         return config;
     }
 
-    public void setConfig(String config) {
+    public void setConfig(Map<String, Object> config) {
         this.config = config;
     }
 }
