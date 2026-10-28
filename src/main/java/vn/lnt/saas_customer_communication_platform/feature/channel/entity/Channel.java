@@ -1,6 +1,8 @@
 package vn.lnt.saas_customer_communication_platform.feature.channel.entity;
 
 import jakarta.persistence.*;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 import vn.lnt.saas_customer_communication_platform.feature.company.entity.Company;
 
 import java.time.LocalDateTime;
@@ -20,9 +22,12 @@ public class Channel {
     @Column(nullable = false, length = 30)
     private ChannelType type;
 
-    private String status;
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 30)
+    private ChannelStatus status = ChannelStatus.ACTIVE;
 
-    @Column(columnDefinition = "TEXT")
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "config", columnDefinition = "json")
     private String config;
 
     @Column(name = "first_connected_at")
@@ -79,11 +84,11 @@ public class Channel {
         this.type = type;
     }
 
-    public String getStatus() {
+    public ChannelStatus getStatus() {
         return status;
     }
 
-    public void setStatus(String status) {
+    public void setStatus(ChannelStatus status) {
         this.status = status;
     }
 

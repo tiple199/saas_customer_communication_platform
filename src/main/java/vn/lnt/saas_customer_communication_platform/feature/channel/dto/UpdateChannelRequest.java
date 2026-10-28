@@ -1,6 +1,7 @@
 package vn.lnt.saas_customer_communication_platform.feature.channel.dto;
 
 import jakarta.validation.constraints.Size;
+import vn.lnt.saas_customer_communication_platform.feature.channel.entity.ChannelStatus;
 import vn.lnt.saas_customer_communication_platform.feature.channel.entity.ChannelType;
 
 import java.util.Map;
@@ -12,14 +13,14 @@ public class UpdateChannelRequest {
 
     private ChannelType type;
 
-    private String status;
+    private ChannelStatus status;
 
     private Map<String, Object> config;
 
     public UpdateChannelRequest() {
     }
 
-    public UpdateChannelRequest(String name, ChannelType type, String status, Map<String, Object> config) {
+    public UpdateChannelRequest(String name, ChannelType type, ChannelStatus status, Map<String, Object> config) {
         this.name = name;
         this.type = type;
         this.status = status;
@@ -42,11 +43,11 @@ public class UpdateChannelRequest {
         this.type = type;
     }
 
-    public String getStatus() {
+    public ChannelStatus getStatus() {
         return status;
     }
 
-    public void setStatus(String status) {
+    public void setStatus(ChannelStatus status) {
         this.status = status;
     }
 

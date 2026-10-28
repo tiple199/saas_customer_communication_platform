@@ -2,6 +2,7 @@ package vn.lnt.saas_customer_communication_platform.feature.channel.dto;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import vn.lnt.saas_customer_communication_platform.feature.channel.entity.Channel;
+import vn.lnt.saas_customer_communication_platform.feature.channel.entity.ChannelStatus;
 import vn.lnt.saas_customer_communication_platform.feature.channel.entity.ChannelType;
 
 import java.time.LocalDateTime;
@@ -13,7 +14,7 @@ public class ChannelResponse {
     private Long id;
     private String name;
     private ChannelType type;
-    private String status;
+    private ChannelStatus status;
     private Object config;
     private LocalDateTime firstConnectedAt;
     private LocalDateTime lastSeenAt;
@@ -24,7 +25,7 @@ public class ChannelResponse {
     public ChannelResponse() {
     }
 
-    public ChannelResponse(Long id, String name, ChannelType type, String status, Object config,
+    public ChannelResponse(Long id, String name, ChannelType type, ChannelStatus status, Object config,
                            LocalDateTime firstConnectedAt, LocalDateTime lastSeenAt,
                            LocalDateTime createdAt, LocalDateTime updatedAt, Long companyId) {
         this.id = id;
@@ -91,11 +92,11 @@ public class ChannelResponse {
         this.type = type;
     }
 
-    public String getStatus() {
+    public ChannelStatus getStatus() {
         return status;
     }
 
-    public void setStatus(String status) {
+    public void setStatus(ChannelStatus status) {
         this.status = status;
     }
 

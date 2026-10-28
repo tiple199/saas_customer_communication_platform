@@ -16,6 +16,7 @@ import vn.lnt.saas_customer_communication_platform.feature.channel.dto.ChannelRe
 import vn.lnt.saas_customer_communication_platform.feature.channel.dto.CreateChannelRequest;
 import vn.lnt.saas_customer_communication_platform.feature.channel.dto.UpdateChannelRequest;
 import vn.lnt.saas_customer_communication_platform.feature.channel.entity.Channel;
+import vn.lnt.saas_customer_communication_platform.feature.channel.entity.ChannelStatus;
 import vn.lnt.saas_customer_communication_platform.feature.channel.repository.ChannelRepository;
 import vn.lnt.saas_customer_communication_platform.feature.channel.service.ChannelService;
 import vn.lnt.saas_customer_communication_platform.feature.company.entity.Company;
@@ -72,7 +73,7 @@ public class ChannelServiceImpl implements ChannelService {
         Channel channel = new Channel();
         channel.setName(request.getName().trim());
         channel.setType(request.getType());
-        channel.setStatus("ACTIVE");
+        channel.setStatus(ChannelStatus.ACTIVE);
         channel.setCompany(company);
 
         // Áp dụng Strategy để khởi tạo cấu hình theo loại channel
@@ -162,8 +163,8 @@ public class ChannelServiceImpl implements ChannelService {
             channel.setType(request.getType());
         }
 
-        if (request.getStatus() != null && !request.getStatus().isBlank()) {
-            channel.setStatus(request.getStatus().trim().toUpperCase());
+        if (request.getStatus() != null) {
+            channel.setStatus(request.getStatus());
         }
 
         // Áp dụng Strategy để xử lý cập nhật theo loại channel tương ứng

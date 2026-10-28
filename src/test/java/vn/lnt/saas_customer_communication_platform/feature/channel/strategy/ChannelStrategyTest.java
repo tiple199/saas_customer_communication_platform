@@ -6,6 +6,7 @@ import vn.lnt.saas_customer_communication_platform.exception.InvalidOperationExc
 import vn.lnt.saas_customer_communication_platform.feature.channel.dto.CreateChannelRequest;
 import vn.lnt.saas_customer_communication_platform.feature.channel.dto.UpdateChannelRequest;
 import vn.lnt.saas_customer_communication_platform.feature.channel.entity.Channel;
+import vn.lnt.saas_customer_communication_platform.feature.channel.entity.ChannelStatus;
 import vn.lnt.saas_customer_communication_platform.feature.channel.entity.ChannelType;
 import vn.lnt.saas_customer_communication_platform.feature.channel.strategy.impl.TelegramChannelStrategy;
 import vn.lnt.saas_customer_communication_platform.feature.channel.strategy.impl.WebChannelStrategy;
@@ -88,7 +89,7 @@ class ChannelStrategyTest {
         assertNotNull(channel.getConfig());
         assertTrue(channel.getConfig().contains("123456:ABC-DEF"));
 
-        UpdateChannelRequest updateRequest = new UpdateChannelRequest("Telegram Channel", ChannelType.TELEGRAM, "ACTIVE", Map.of("botToken", "new_token"));
+        UpdateChannelRequest updateRequest = new UpdateChannelRequest("Telegram Channel", ChannelType.TELEGRAM, ChannelStatus.ACTIVE, Map.of("botToken", "new_token"));
         telegramChannelStrategy.updateChannel(channel, updateRequest);
         assertNotNull(channel.getConfig());
         assertTrue(channel.getConfig().contains("new_token"));

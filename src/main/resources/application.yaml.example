@@ -1,6 +1,7 @@
 spring:
   application:
     name: saas_customer_communication_platform
+  # Cấu hình Datasource H2 (mặc định cho Dev/Test)
   datasource:
     url: jdbc:h2:mem:saas_db;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
     driver-class-name: org.h2.Driver
@@ -10,6 +11,14 @@ spring:
     console:
       enabled: true
       path: /h2-console
+
+  # Cấu hình Datasource MySQL (bật lên khi kết nối MySQL thật)
+  # datasource:
+  #   url: jdbc:mysql://localhost:3306/saas_communication_db?useSSL=false&serverTimezone=UTC&characterEncoding=UTF-8&allowPublicKeyRetrieval=true
+  #   driver-class-name: com.mysql.cj.jdbc.Driver
+  #   username: root
+  #   password: your_mysql_password
+
   jpa:
     hibernate:
       ddl-auto: update
@@ -17,6 +26,7 @@ spring:
     properties:
       hibernate:
         format_sql: true
+        # dialect: org.hibernate.dialect.MySQLDialect  # Bật lên khi dùng MySQL
 
 jwt:
   secret-key: YOUR_JWT_SECRET_KEY_HERE_MIN_256_BITS
