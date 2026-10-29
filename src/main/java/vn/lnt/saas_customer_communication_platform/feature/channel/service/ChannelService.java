@@ -18,7 +18,11 @@ public interface ChannelService {
 
     ChannelResponse getChannelById(String currentUserEmail, Long companyId, Long channelId);
 
+    ChannelResponse getChannelByKey(String currentUserEmail, Long companyId, String channelKey);
+
     ChannelResponse updateChannel(String currentUserEmail, Long companyId, Long channelId, UpdateChannelRequest request);
+
+    ChannelResponse regenerateChannelKey(String currentUserEmail, Long companyId, Long channelId);
 
     void deleteChannel(String currentUserEmail, Long companyId, Long channelId);
 }

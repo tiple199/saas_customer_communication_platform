@@ -64,6 +64,19 @@ class ChannelStrategyTest {
     }
 
     @Test
+    void webStrategyUsesChannelKeyWhenAvailable() {
+        Channel channel = new Channel();
+        channel.setName("My Web Widget");
+        channel.setChannelKey("chk_custom_key_123");
+        CreateChannelRequest request = new CreateChannelRequest("My Web Widget", ChannelType.WEB, null);
+
+        webChannelStrategy.initChannel(channel, request);
+
+        assertNotNull(channel.getConfig());
+        assertTrue(channel.getConfig().contains("chk_custom_key_123"));
+    }
+
+    @Test
     void webStrategyPreservesExistingConfigAndAddsWidgetKey() {
         Channel channel = new Channel();
         channel.setName("Custom Web Widget");
@@ -93,5 +106,76 @@ class ChannelStrategyTest {
         telegramChannelStrategy.updateChannel(channel, updateRequest);
         assertNotNull(channel.getConfig());
         assertTrue(channel.getConfig().contains("new_token"));
+    }
+
+    @Test
+    void telegramStrategyThrowsExceptionWhenBotTokenMissing() {
+        Channel channel = new Channel();
+        channel.setName("Telegram Channel");
+        CreateChannelRequest request = new CreateChannelRequest("Telegram Channel", ChannelType.TELEGRAM, Map.of());
+
+        InvalidOperationException ex = assertThrows(InvalidOperationException.class,
+                () -> telegramChannelStrategy.initChannel(channel, request));
+        assertTrue(ex.getMessage().contains("Bot token của Telegram là bắt buộc"));
+    }
+
+    @Test
+    void telegramStrategyThrowsExceptionWhenBotTokenIsBlank() {
+        Channel channel = new Channel();
+        channel.setName("Telegram Channel");
+        CreateChannelRequest request = new CreateChannelRequest("Telegram Channel", ChannelType.TELEGRAM, Map.of("botToken", "   "));
+
+        InvalidOperationException ex = assertThrows(InvalidOperationException.class,
+                () -> telegramChannelStrategy.initChannel(channel, request));
+        assertTrue(ex.getMessage().contains("Bot token của Telegram là bắt buộc"));
+    }
+
+    @Test
+    void webStrategyThrowsExceptionWhenWelcomeMessageTooLong() {
+        Channel channel = new Channel();
+        channel.setName("Web Channel");
+        String longMessage = "a".repeat(501);
+        CreateChannelRequest request = new CreateChannelRequest("Web Channel", ChannelType.WEB, Map.of("welcomeMessage", longMessage));
+
+        InvalidOperationException ex = assertThrows(InvalidOperationException.class,
+                () -> webChannelStrategy.initChannel(channel, request));
+        assertTrue(ex.getMessage().contains("Lời chào không được vượt quá 500 ký tự"));
+    }
+
+    @Test
+    void webStrategyNormalizesAllowedDomains() {
+        Channel channel = new Channel();
+        channel.setName("Web Channel");
+        CreateChannelRequest request = new CreateChannelRequest("Web Channel", ChannelType.WEB,
+                Map.of("allowedDomains", " shop.my-domain.vn , localhost:3000 "));
+
+        webChannelStrategy.initChannel(channel, request);
+
+        assertNotNull(channel.getConfig());
+        assertTrue(channel.getConfig().contains("shop.my-domain.vn,localhost:3000"));
+    }
+
+    @Test
+    void webStrategyThrowsExceptionWhenAllowedDomainHasProtocol() {
+        Channel channel = new Channel();
+        channel.setName("Web Channel");
+        CreateChannelRequest request = new CreateChannelRequest("Web Channel", ChannelType.WEB,
+                Map.of("allowedDomains", "https://shop.my-domain.vn"));
+
+        InvalidOperationException ex = assertThrows(InvalidOperationException.class,
+                () -> webChannelStrategy.initChannel(channel, request));
+        assertTrue(ex.getMessage().contains("Không nhập giao thức (http/https) hoặc đường dẫn (/)"));
+    }
+
+    @Test
+    void webStrategyThrowsExceptionWhenAllowedDomainIsInvalid() {
+        Channel channel = new Channel();
+        channel.setName("Web Channel");
+        CreateChannelRequest request = new CreateChannelRequest("Web Channel", ChannelType.WEB,
+                Map.of("allowedDomains", "invalid domain with space.com"));
+
+        InvalidOperationException ex = assertThrows(InvalidOperationException.class,
+                () -> webChannelStrategy.initChannel(channel, request));
+        assertTrue(ex.getMessage().contains("Tên miền không hợp lệ"));
     }
 }

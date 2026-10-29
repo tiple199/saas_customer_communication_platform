@@ -18,6 +18,12 @@ public interface ChannelRepository extends JpaRepository<Channel, Long> {
 
     Optional<Channel> findByIdAndCompanyId(Long id, Long companyId);
 
+    Optional<Channel> findByChannelKey(String channelKey);
+
+    Optional<Channel> findByChannelKeyAndCompanyId(String channelKey, Long companyId);
+
+    boolean existsByChannelKey(String channelKey);
+
     boolean existsByCompanyIdAndName(Long companyId, String name);
 
     boolean existsByCompanyIdAndNameAndIdNot(Long companyId, String name, Long id);

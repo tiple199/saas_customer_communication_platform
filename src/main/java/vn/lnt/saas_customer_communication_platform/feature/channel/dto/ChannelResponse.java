@@ -12,6 +12,7 @@ public class ChannelResponse {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private Long id;
+    private String channelKey;
     private String name;
     private ChannelType type;
     private ChannelStatus status;
@@ -25,10 +26,11 @@ public class ChannelResponse {
     public ChannelResponse() {
     }
 
-    public ChannelResponse(Long id, String name, ChannelType type, ChannelStatus status, Object config,
+    public ChannelResponse(Long id, String channelKey, String name, ChannelType type, ChannelStatus status, Object config,
                            LocalDateTime firstConnectedAt, LocalDateTime lastSeenAt,
                            LocalDateTime createdAt, LocalDateTime updatedAt, Long companyId) {
         this.id = id;
+        this.channelKey = channelKey;
         this.name = name;
         this.type = type;
         this.status = status;
@@ -56,6 +58,7 @@ public class ChannelResponse {
 
         return new ChannelResponse(
                 channel.getId(),
+                channel.getChannelKey(),
                 channel.getName(),
                 channel.getType(),
                 channel.getStatus(),
@@ -74,6 +77,14 @@ public class ChannelResponse {
 
     public void setId(Long id) {
         this.id = id;
+    }
+
+    public String getChannelKey() {
+        return channelKey;
+    }
+
+    public void setChannelKey(String channelKey) {
+        this.channelKey = channelKey;
     }
 
     public String getName() {

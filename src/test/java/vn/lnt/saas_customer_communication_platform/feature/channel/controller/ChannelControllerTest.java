@@ -17,6 +17,7 @@ import vn.lnt.saas_customer_communication_platform.feature.company.service.Compa
 
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.hasSize;
+import static org.hamcrest.Matchers.startsWith;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -81,14 +82,17 @@ class ChannelControllerTest {
                 .andExpect(jsonPath("$.data.name").value("Livechat Widget"))
                 .andExpect(jsonPath("$.data.type").value("WEB"))
                 .andExpect(jsonPath("$.data.status").value("ACTIVE"))
+                .andExpect(jsonPath("$.data.channelKey").isNotEmpty())
+                .andExpect(jsonPath("$.data.channelKey").value(startsWith("chk_")))
                 .andExpect(jsonPath("$.data.config.welcomeMessage").value("Xin chào"))
                 .andExpect(jsonPath("$.data.config.widgetKey").isNotEmpty())
                 .andReturn().getResponse().getContentAsString();
 
-        // Extract channel id
+        // Extract channel id and channel key
         com.jayway.jsonpath.ReadContext ctx = com.jayway.jsonpath.JsonPath.parse(responseContent);
         Number idNum = ctx.read("$.data.id");
         Long channelId = idNum.longValue();
+        String channelKey = ctx.read("$.data.channelKey");
 
         // 2. Get Channel By Id
         mockMvc.perform(get("/api/v1/channels/" + channelId)
@@ -97,7 +101,26 @@ class ChannelControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.statusCode").value(200))
                 .andExpect(jsonPath("$.data.name").value("Livechat Widget"))
+                .andExpect(jsonPath("$.data.channelKey").value(channelKey))
                 .andExpect(jsonPath("$.data.config.widgetKey").isNotEmpty());
+
+        // 2b. Get Channel By Key
+        mockMvc.perform(get("/api/v1/channels/key/" + channelKey)
+                        .with(jwt().jwt(j -> j.subject("channelowner@example.com")))
+                        .param("companyId", companyId.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.statusCode").value(200))
+                .andExpect(jsonPath("$.data.id").value(channelId))
+                .andExpect(jsonPath("$.data.channelKey").value(channelKey));
+
+        // 2c. Regenerate Channel Key
+        mockMvc.perform(post("/api/v1/channels/" + channelId + "/regenerate-key")
+                        .with(jwt().jwt(j -> j.subject("channelowner@example.com")))
+                        .param("companyId", companyId.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.statusCode").value(200))
+                .andExpect(jsonPath("$.data.channelKey").isNotEmpty())
+                .andExpect(jsonPath("$.data.channelKey").value(startsWith("chk_")));
 
         // 3. Get Channels list
         mockMvc.perform(get("/api/v1/channels")
@@ -162,7 +185,11 @@ class ChannelControllerTest {
         String createJson = """
                 {
                     "name": "Telegram Bot Channel",
-                    "type": "TELEGRAM"
+                    "type": "TELEGRAM",
+                    "config": {
+                        "botToken": "123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ",
+                        "botUsername": "CustomerSupportBot"
+                    }
                 }
                 """;
 
@@ -173,7 +200,26 @@ class ChannelControllerTest {
                         .content(createJson))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.statusCode").value(201))
-                .andExpect(jsonPath("$.data.type").value("TELEGRAM"));
+                .andExpect(jsonPath("$.data.type").value("TELEGRAM"))
+                .andExpect(jsonPath("$.data.config.botUsername").value("CustomerSupportBot"));
+    }
+
+    @Test
+    void createTelegramChannelWithoutBotTokenFailsTest() throws Exception {
+        String createJson = """
+                {
+                    "name": "Telegram Without Token",
+                    "type": "TELEGRAM"
+                }
+                """;
+
+        mockMvc.perform(post("/api/v1/channels")
+                        .with(jwt().jwt(j -> j.subject("channelowner@example.com")))
+                        .param("companyId", companyId.toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(createJson))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Bot token của Telegram là bắt buộc và không được để trống"));
     }
 
     @Test
@@ -199,5 +245,26 @@ class ChannelControllerTest {
                         .with(jwt().jwt(j -> j.subject("channelmember@example.com")))
                         .param("companyId", companyId.toString()))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void createWebChannelWithInvalidAllowedDomainFailsTest() throws Exception {
+        String invalidJson = """
+                {
+                    "name": "Web Bad Domain",
+                    "type": "WEB",
+                    "config": {
+                        "allowedDomains": "invalid domain name with spaces"
+                    }
+                }
+                """;
+
+        mockMvc.perform(post("/api/v1/channels")
+                        .with(jwt().jwt(j -> j.subject("channelowner@example.com")))
+                        .param("companyId", companyId.toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(invalidJson))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("Tên miền không hợp lệ")));
     }
 }

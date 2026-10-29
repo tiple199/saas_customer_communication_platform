@@ -46,4 +46,8 @@ public class WebChannelConfig {
     public void setAllowedDomains(String allowedDomains) {
         this.allowedDomains = allowedDomains;
     }
+
+    public boolean isOriginAllowed(String origin) {
+        return vn.lnt.saas_customer_communication_platform.feature.channel.util.DomainValidator.isOriginAllowed(origin, this.allowedDomains);
+    }
 }

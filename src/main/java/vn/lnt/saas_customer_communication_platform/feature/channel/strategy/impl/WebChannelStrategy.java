@@ -4,12 +4,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import vn.lnt.saas_customer_communication_platform.exception.InvalidOperationException;
 import vn.lnt.saas_customer_communication_platform.feature.channel.dto.CreateChannelRequest;
 import vn.lnt.saas_customer_communication_platform.feature.channel.dto.UpdateChannelRequest;
 import vn.lnt.saas_customer_communication_platform.feature.channel.dto.config.WebChannelConfig;
 import vn.lnt.saas_customer_communication_platform.feature.channel.entity.Channel;
 import vn.lnt.saas_customer_communication_platform.feature.channel.entity.ChannelType;
 import vn.lnt.saas_customer_communication_platform.feature.channel.strategy.ChannelStrategy;
+import vn.lnt.saas_customer_communication_platform.feature.channel.util.DomainValidator;
 
 import java.util.Map;
 import java.util.UUID;
@@ -30,11 +32,12 @@ public class WebChannelStrategy implements ChannelStrategy {
         log.info("Khởi tạo cấu hình kênh WEB Livechat cho: {}", channel.getName());
         WebChannelConfig config = convertConfig(request.getConfig());
 
-        // Nếu chưa có widgetKey, tự động sinh khóa nhận diện cho widget
+        // Nếu chưa có widgetKey, tự động gán bằng channelKey hoặc sinh khóa nhận diện cho widget
         if (config.getWidgetKey() == null || config.getWidgetKey().isBlank()) {
-            config.setWidgetKey("web_" + UUID.randomUUID().toString().replace("-", ""));
+            config.setWidgetKey(channel.getChannelKey() != null ? channel.getChannelKey() : "web_" + UUID.randomUUID().toString().replace("-", ""));
         }
 
+        validate(config);
         channel.setConfig(toJson(config));
     }
 
@@ -50,7 +53,21 @@ public class WebChannelStrategy implements ChannelStrategy {
                 newConfig.setWidgetKey(currentConfig.getWidgetKey());
             }
 
+            validate(newConfig);
             channel.setConfig(toJson(newConfig));
+        }
+    }
+
+    private void validate(WebChannelConfig config) {
+        if (config.getWelcomeMessage() != null && config.getWelcomeMessage().length() > 500) {
+            throw new InvalidOperationException("Lời chào không được vượt quá 500 ký tự");
+        }
+        if (config.getWidgetKey() != null && config.getWidgetKey().length() > 100) {
+            throw new InvalidOperationException("Widget key không được vượt quá 100 ký tự");
+        }
+        if (config.getAllowedDomains() != null && !config.getAllowedDomains().isBlank()) {
+            String normalizedDomains = DomainValidator.validateAndNormalize(config.getAllowedDomains());
+            config.setAllowedDomains(normalizedDomains);
         }
     }
 

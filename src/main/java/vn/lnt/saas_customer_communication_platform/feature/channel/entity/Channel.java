@@ -6,6 +6,7 @@ import org.hibernate.type.SqlTypes;
 import vn.lnt.saas_customer_communication_platform.feature.company.entity.Company;
 
 import java.time.LocalDateTime;
+import java.util.UUID;
 
 @Entity
 @Table(name = "channels")
@@ -14,6 +15,9 @@ public class Channel {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    @Column(name = "channel_key", nullable = false, unique = true, length = 64)
+    private String channelKey;
 
     @Column(nullable = false)
     private String name;
@@ -48,8 +52,15 @@ public class Channel {
 
     @PrePersist
     protected void onCreate() {
+        if (this.channelKey == null || this.channelKey.isBlank()) {
+            this.channelKey = generateChannelKey();
+        }
         this.createdAt = LocalDateTime.now();
         this.updatedAt = LocalDateTime.now();
+    }
+
+    public static String generateChannelKey() {
+        return "chk_" + UUID.randomUUID().toString().replace("-", "");
     }
 
     @PreUpdate
@@ -66,6 +77,14 @@ public class Channel {
 
     public void setId(Long id) {
         this.id = id;
+    }
+
+    public String getChannelKey() {
+        return channelKey;
+    }
+
+    public void setChannelKey(String channelKey) {
+        this.channelKey = channelKey;
     }
 
     public String getName() {

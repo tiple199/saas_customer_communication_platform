@@ -68,6 +68,16 @@ public class ChannelController {
         return ResponseEntity.ok(ApiResponse.success("Lấy thông tin kênh kết nối thành công", response));
     }
 
+    @GetMapping("/key/{channelKey}")
+    public ResponseEntity<ApiResponse<ChannelResponse>> getChannelByKey(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestParam(required = false) Long companyId,
+            @PathVariable String channelKey) {
+        String currentUserEmail = jwt != null ? jwt.getSubject() : null;
+        ChannelResponse response = channelService.getChannelByKey(currentUserEmail, companyId, channelKey);
+        return ResponseEntity.ok(ApiResponse.success("Lấy thông tin kênh kết nối thành công", response));
+    }
+
     @PutMapping("/{id}")
     public ResponseEntity<ApiResponse<ChannelResponse>> updateChannel(
             @AuthenticationPrincipal Jwt jwt,
@@ -77,6 +87,16 @@ public class ChannelController {
         String currentUserEmail = jwt != null ? jwt.getSubject() : null;
         ChannelResponse response = channelService.updateChannel(currentUserEmail, companyId, id, request);
         return ResponseEntity.ok(ApiResponse.success("Cập nhật kênh kết nối thành công", response));
+    }
+
+    @PostMapping("/{id}/regenerate-key")
+    public ResponseEntity<ApiResponse<ChannelResponse>> regenerateChannelKey(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestParam(required = false) Long companyId,
+            @PathVariable Long id) {
+        String currentUserEmail = jwt != null ? jwt.getSubject() : null;
+        ChannelResponse response = channelService.regenerateChannelKey(currentUserEmail, companyId, id);
+        return ResponseEntity.ok(ApiResponse.success("Tạo lại khóa kênh kết nối thành công", response));
     }
 
     @DeleteMapping("/{id}")

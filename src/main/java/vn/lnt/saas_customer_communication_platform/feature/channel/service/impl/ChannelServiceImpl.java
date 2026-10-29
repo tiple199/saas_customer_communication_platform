@@ -71,6 +71,7 @@ public class ChannelServiceImpl implements ChannelService {
         ChannelStrategy strategy = channelStrategyFactory.getStrategy(request.getType());
 
         Channel channel = new Channel();
+        channel.setChannelKey(Channel.generateChannelKey());
         channel.setName(request.getName().trim());
         channel.setType(request.getType());
         channel.setStatus(ChannelStatus.ACTIVE);
@@ -141,6 +142,20 @@ public class ChannelServiceImpl implements ChannelService {
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public ChannelResponse getChannelByKey(String currentUserEmail, Long companyId, String channelKey) {
+        User currentUser = getUserByEmail(currentUserEmail);
+        Long targetCompanyId = resolveTargetCompanyId(companyId);
+
+        validateActiveCompanyMember(currentUser.getId(), targetCompanyId);
+
+        Channel channel = channelRepository.findByChannelKeyAndCompanyId(channelKey, targetCompanyId)
+                .orElseThrow(() -> new ResourceNotFoundException("Channel", "channelKey", channelKey));
+
+        return ChannelResponse.fromEntity(channel);
+    }
+
+    @Override
     @Transactional
     public ChannelResponse updateChannel(String currentUserEmail, Long companyId, Long channelId, UpdateChannelRequest request) {
         User currentUser = getUserByEmail(currentUserEmail);
@@ -173,6 +188,22 @@ public class ChannelServiceImpl implements ChannelService {
 
         Channel updatedChannel = channelRepository.save(channel);
         return ChannelResponse.fromEntity(updatedChannel);
+    }
+
+    @Override
+    @Transactional
+    public ChannelResponse regenerateChannelKey(String currentUserEmail, Long companyId, Long channelId) {
+        User currentUser = getUserByEmail(currentUserEmail);
+        Long targetCompanyId = resolveTargetCompanyId(companyId);
+
+        validateActiveAdminOrOwner(currentUser.getId(), targetCompanyId, "Chỉ quản trị viên hoặc chủ công ty mới có quyền tạo lại khóa kênh kết nối");
+
+        Channel channel = channelRepository.findByIdAndCompanyId(channelId, targetCompanyId)
+                .orElseThrow(() -> new ResourceNotFoundException("Channel", "id", channelId));
+
+        channel.setChannelKey(Channel.generateChannelKey());
+        Channel savedChannel = channelRepository.save(channel);
+        return ChannelResponse.fromEntity(savedChannel);
     }
 
     @Override
