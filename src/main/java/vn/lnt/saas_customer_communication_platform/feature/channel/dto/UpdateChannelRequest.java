@@ -17,14 +17,21 @@ public class UpdateChannelRequest {
 
     private Map<String, Object> config;
 
+    private Boolean aiEnabled;
+
     public UpdateChannelRequest() {
     }
 
     public UpdateChannelRequest(String name, ChannelType type, ChannelStatus status, Map<String, Object> config) {
+        this(name, type, status, config, null);
+    }
+
+    public UpdateChannelRequest(String name, ChannelType type, ChannelStatus status, Map<String, Object> config, Boolean aiEnabled) {
         this.name = name;
         this.type = type;
         this.status = status;
         this.config = config;
+        this.aiEnabled = aiEnabled;
     }
 
     public String getName() {
@@ -57,5 +64,13 @@ public class UpdateChannelRequest {
 
     public void setConfig(Map<String, Object> config) {
         this.config = config;
+    }
+
+    public Boolean getAiEnabled() {
+        return aiEnabled;
+    }
+
+    public void setAiEnabled(Boolean aiEnabled) {
+        this.aiEnabled = aiEnabled;
     }
 }

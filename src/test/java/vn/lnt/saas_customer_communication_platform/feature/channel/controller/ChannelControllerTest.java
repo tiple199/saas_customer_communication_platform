@@ -267,4 +267,81 @@ class ChannelControllerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("Tên miền không hợp lệ")));
     }
+
+    @Test
+    void toggleChannelAiSuccessTest() throws Exception {
+        // 1. Tạo channel mới
+        String createJson = """
+                {
+                    "name": "Channel for AI Toggle",
+                    "type": "WEB",
+                    "aiEnabled": false
+                }
+                """;
+
+        String responseContent = mockMvc.perform(post("/api/v1/channels")
+                        .with(jwt().jwt(j -> j.subject("channelowner@example.com")))
+                        .param("companyId", companyId.toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(createJson))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.aiEnabled").value(false))
+                .andReturn().getResponse().getContentAsString();
+
+        com.jayway.jsonpath.ReadContext ctx = com.jayway.jsonpath.JsonPath.parse(responseContent);
+        Number idNum = ctx.read("$.data.id");
+        Long channelId = idNum.longValue();
+
+        // 2. Bật AI cho channel
+        mockMvc.perform(patch("/api/v1/channels/" + channelId + "/ai")
+                        .with(jwt().jwt(j -> j.subject("channelowner@example.com")))
+                        .param("companyId", companyId.toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                    "enabled": true
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.message").value("Bật tính năng AI cho kênh kết nối thành công"))
+                .andExpect(jsonPath("$.data.aiEnabled").value(true));
+
+        // 3. Kiểm tra lại thông tin channel xem aiEnabled đã đổi thành true chưa
+        mockMvc.perform(get("/api/v1/channels/" + channelId)
+                        .with(jwt().jwt(j -> j.subject("channelowner@example.com")))
+                        .param("companyId", companyId.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.aiEnabled").value(true));
+
+        // 4. Tắt AI cho channel
+        mockMvc.perform(patch("/api/v1/channels/" + channelId + "/ai")
+                        .with(jwt().jwt(j -> j.subject("channelowner@example.com")))
+                        .param("companyId", companyId.toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                    "enabled": false
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.message").value("Tắt tính năng AI cho kênh kết nối thành công"))
+                .andExpect(jsonPath("$.data.aiEnabled").value(false));
+
+        // 5. Kiểm tra lại sau khi tắt
+        mockMvc.perform(get("/api/v1/channels/" + channelId)
+                        .with(jwt().jwt(j -> j.subject("channelowner@example.com")))
+                        .param("companyId", companyId.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.aiEnabled").value(false));
+    }
+
+    @Test
+    void toggleChannelAiFailsWithoutBodyTest() throws Exception {
+        mockMvc.perform(patch("/api/v1/channels/1/ai")
+                        .with(jwt().jwt(j -> j.subject("channelowner@example.com")))
+                        .param("companyId", companyId.toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isBadRequest());
+    }
 }

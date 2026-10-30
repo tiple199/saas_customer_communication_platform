@@ -18,13 +18,20 @@ public class CreateChannelRequest {
 
     private Map<String, Object> config;
 
+    private Boolean aiEnabled;
+
     public CreateChannelRequest() {
     }
 
     public CreateChannelRequest(String name, ChannelType type, Map<String, Object> config) {
+        this(name, type, config, false);
+    }
+
+    public CreateChannelRequest(String name, ChannelType type, Map<String, Object> config, Boolean aiEnabled) {
         this.name = name;
         this.type = type;
         this.config = config;
+        this.aiEnabled = aiEnabled;
     }
 
     public String getName() {
@@ -49,5 +56,13 @@ public class CreateChannelRequest {
 
     public void setConfig(Map<String, Object> config) {
         this.config = config;
+    }
+
+    public Boolean getAiEnabled() {
+        return aiEnabled;
+    }
+
+    public void setAiEnabled(Boolean aiEnabled) {
+        this.aiEnabled = aiEnabled;
     }
 }

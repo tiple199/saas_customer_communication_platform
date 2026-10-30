@@ -17,6 +17,7 @@ public class ChannelResponse {
     private ChannelType type;
     private ChannelStatus status;
     private Object config;
+    private Boolean aiEnabled;
     private LocalDateTime firstConnectedAt;
     private LocalDateTime lastSeenAt;
     private LocalDateTime createdAt;
@@ -27,7 +28,7 @@ public class ChannelResponse {
     }
 
     public ChannelResponse(Long id, String channelKey, String name, ChannelType type, ChannelStatus status, Object config,
-                           LocalDateTime firstConnectedAt, LocalDateTime lastSeenAt,
+                           Boolean aiEnabled, LocalDateTime firstConnectedAt, LocalDateTime lastSeenAt,
                            LocalDateTime createdAt, LocalDateTime updatedAt, Long companyId) {
         this.id = id;
         this.channelKey = channelKey;
@@ -35,6 +36,7 @@ public class ChannelResponse {
         this.type = type;
         this.status = status;
         this.config = config;
+        this.aiEnabled = aiEnabled;
         this.firstConnectedAt = firstConnectedAt;
         this.lastSeenAt = lastSeenAt;
         this.createdAt = createdAt;
@@ -63,6 +65,7 @@ public class ChannelResponse {
                 channel.getType(),
                 channel.getStatus(),
                 parsedConfig,
+                channel.getAiEnabled() != null ? channel.getAiEnabled() : false,
                 channel.getFirstConnectedAt(),
                 channel.getLastSeenAt(),
                 channel.getCreatedAt(),
@@ -157,5 +160,13 @@ public class ChannelResponse {
 
     public void setCompanyId(Long companyId) {
         this.companyId = companyId;
+    }
+
+    public Boolean getAiEnabled() {
+        return aiEnabled;
+    }
+
+    public void setAiEnabled(Boolean aiEnabled) {
+        this.aiEnabled = aiEnabled;
     }
 }

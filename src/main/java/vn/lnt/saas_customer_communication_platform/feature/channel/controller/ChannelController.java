@@ -13,6 +13,7 @@ import vn.lnt.saas_customer_communication_platform.dto.ApiResponse;
 import vn.lnt.saas_customer_communication_platform.dto.PageResponse;
 import vn.lnt.saas_customer_communication_platform.feature.channel.dto.ChannelResponse;
 import vn.lnt.saas_customer_communication_platform.feature.channel.dto.CreateChannelRequest;
+import vn.lnt.saas_customer_communication_platform.feature.channel.dto.UpdateChannelAiRequest;
 import vn.lnt.saas_customer_communication_platform.feature.channel.dto.UpdateChannelRequest;
 import vn.lnt.saas_customer_communication_platform.feature.channel.service.ChannelService;
 
@@ -87,6 +88,20 @@ public class ChannelController {
         String currentUserEmail = jwt != null ? jwt.getSubject() : null;
         ChannelResponse response = channelService.updateChannel(currentUserEmail, companyId, id, request);
         return ResponseEntity.ok(ApiResponse.success("Cập nhật kênh kết nối thành công", response));
+    }
+
+    @PatchMapping("/{id}/ai")
+    public ResponseEntity<ApiResponse<ChannelResponse>> updateChannelAi(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestParam(required = false) Long companyId,
+            @PathVariable Long id,
+            @Valid @RequestBody UpdateChannelAiRequest request) {
+        String currentUserEmail = jwt != null ? jwt.getSubject() : null;
+        ChannelResponse response = channelService.updateChannelAi(currentUserEmail, companyId, id, request.getEnabled());
+        String message = Boolean.TRUE.equals(request.getEnabled())
+                ? "Bật tính năng AI cho kênh kết nối thành công"
+                : "Tắt tính năng AI cho kênh kết nối thành công";
+        return ResponseEntity.ok(ApiResponse.success(message, response));
     }
 
     @PostMapping("/{id}/regenerate-key")

@@ -75,6 +75,7 @@ public class ChannelServiceImpl implements ChannelService {
         channel.setName(request.getName().trim());
         channel.setType(request.getType());
         channel.setStatus(ChannelStatus.ACTIVE);
+        channel.setAiEnabled(request.getAiEnabled() != null ? request.getAiEnabled() : false);
         channel.setCompany(company);
 
         // Áp dụng Strategy để khởi tạo cấu hình theo loại channel
@@ -182,12 +183,32 @@ public class ChannelServiceImpl implements ChannelService {
             channel.setStatus(request.getStatus());
         }
 
+        if (request.getAiEnabled() != null) {
+            channel.setAiEnabled(request.getAiEnabled());
+        }
+
         // Áp dụng Strategy để xử lý cập nhật theo loại channel tương ứng
         ChannelStrategy strategy = channelStrategyFactory.getStrategy(channel.getType());
         strategy.updateChannel(channel, request);
 
         Channel updatedChannel = channelRepository.save(channel);
         return ChannelResponse.fromEntity(updatedChannel);
+    }
+
+    @Override
+    @Transactional
+    public ChannelResponse updateChannelAi(String currentUserEmail, Long companyId, Long channelId, boolean enabled) {
+        User currentUser = getUserByEmail(currentUserEmail);
+        Long targetCompanyId = resolveTargetCompanyId(companyId);
+
+        validateActiveAdminOrOwner(currentUser.getId(), targetCompanyId, "Chỉ quản trị viên hoặc chủ công ty mới có quyền bật/tắt AI cho kênh kết nối");
+
+        Channel channel = channelRepository.findByIdAndCompanyId(channelId, targetCompanyId)
+                .orElseThrow(() -> new ResourceNotFoundException("Channel", "id", channelId));
+
+        channel.setAiEnabled(enabled);
+        Channel savedChannel = channelRepository.save(channel);
+        return ChannelResponse.fromEntity(savedChannel);
     }
 
     @Override

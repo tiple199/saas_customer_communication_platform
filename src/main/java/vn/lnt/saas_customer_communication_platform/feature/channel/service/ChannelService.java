@@ -22,6 +22,8 @@ public interface ChannelService {
 
     ChannelResponse updateChannel(String currentUserEmail, Long companyId, Long channelId, UpdateChannelRequest request);
 
+    ChannelResponse updateChannelAi(String currentUserEmail, Long companyId, Long channelId, boolean enabled);
+
     ChannelResponse regenerateChannelKey(String currentUserEmail, Long companyId, Long channelId);
 
     void deleteChannel(String currentUserEmail, Long companyId, Long channelId);

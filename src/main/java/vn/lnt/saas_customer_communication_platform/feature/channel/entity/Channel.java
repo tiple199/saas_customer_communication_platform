@@ -34,6 +34,9 @@ public class Channel {
     @Column(name = "config", columnDefinition = "json")
     private String config;
 
+    @Column(name = "ai_enabled", nullable = false)
+    private Boolean aiEnabled = false;
+
     @Column(name = "first_connected_at")
     private LocalDateTime firstConnectedAt;
 
@@ -54,6 +57,9 @@ public class Channel {
     protected void onCreate() {
         if (this.channelKey == null || this.channelKey.isBlank()) {
             this.channelKey = generateChannelKey();
+        }
+        if (this.aiEnabled == null) {
+            this.aiEnabled = false;
         }
         this.createdAt = LocalDateTime.now();
         this.updatedAt = LocalDateTime.now();
@@ -117,6 +123,14 @@ public class Channel {
 
     public void setConfig(String config) {
         this.config = config;
+    }
+
+    public Boolean getAiEnabled() {
+        return aiEnabled;
+    }
+
+    public void setAiEnabled(Boolean aiEnabled) {
+        this.aiEnabled = aiEnabled;
     }
 
     public LocalDateTime getFirstConnectedAt() {
