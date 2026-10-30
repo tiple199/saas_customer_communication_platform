@@ -46,6 +46,7 @@ public class SecurityConfig {
             "/api/v1/auth/login",
             "/api/v1/auth/register",
             "/api/v1/auth/refresh",
+            "/api/v1/public/widget/**",
             "/v3/api-docs/**",
             "/swagger-ui/**",
             "/swagger-ui.html",
@@ -98,15 +99,24 @@ public class SecurityConfig {
 
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
-        CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(List.of("http://localhost:3000"));
-        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"));
-        configuration.setAllowedHeaders(List.of("*"));
-        configuration.setAllowCredentials(true);
-        configuration.setMaxAge(3600L);
+        CorsConfiguration appConfig = new CorsConfiguration();
+        appConfig.setAllowedOrigins(List.of("http://localhost:3000"));
+        appConfig.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"));
+        appConfig.setAllowedHeaders(List.of("*"));
+        appConfig.setAllowCredentials(true);
+        appConfig.setMaxAge(3600L);
+
+        // CORS cho Public Widget (cho phép script nhúng từ các website đối tác gọi tới)
+        CorsConfiguration publicWidgetConfig = new CorsConfiguration();
+        publicWidgetConfig.setAllowedOriginPatterns(List.of("*"));
+        publicWidgetConfig.setAllowedMethods(List.of("GET", "POST", "OPTIONS"));
+        publicWidgetConfig.setAllowedHeaders(List.of("*"));
+        publicWidgetConfig.setAllowCredentials(false);
+        publicWidgetConfig.setMaxAge(3600L);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
-        source.registerCorsConfiguration("/**", configuration);
+        source.registerCorsConfiguration("/api/v1/public/widget/**", publicWidgetConfig);
+        source.registerCorsConfiguration("/**", appConfig);
         return source;
     }
 
