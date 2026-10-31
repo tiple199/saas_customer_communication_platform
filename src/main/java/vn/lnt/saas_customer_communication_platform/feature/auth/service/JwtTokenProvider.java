@@ -1,6 +1,7 @@
 package vn.lnt.saas_customer_communication_platform.feature.auth.service;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
 import org.springframework.security.oauth2.jwt.*;
 import org.springframework.stereotype.Component;
 import vn.lnt.saas_customer_communication_platform.feature.auth.entity.User;
@@ -39,7 +40,8 @@ public class JwtTokenProvider {
                 .claim("type", "ACCESS")
                 .build();
 
-        return jwtEncoder.encode(JwtEncoderParameters.from(claims)).getTokenValue();
+        JwsHeader jwsHeader = JwsHeader.with(MacAlgorithm.HS256).build();
+        return jwtEncoder.encode(JwtEncoderParameters.from(jwsHeader, claims)).getTokenValue();
     }
 
     public String generateRefreshToken(User user) {
@@ -56,7 +58,8 @@ public class JwtTokenProvider {
                 .claim("jti", UUID.randomUUID().toString())
                 .build();
 
-        return jwtEncoder.encode(JwtEncoderParameters.from(claims)).getTokenValue();
+        JwsHeader jwsHeader = JwsHeader.with(MacAlgorithm.HS256).build();
+        return jwtEncoder.encode(JwtEncoderParameters.from(jwsHeader, claims)).getTokenValue();
     }
 
     public Jwt decodeToken(String token) {

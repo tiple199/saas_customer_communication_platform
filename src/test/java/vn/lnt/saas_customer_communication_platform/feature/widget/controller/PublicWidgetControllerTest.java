@@ -1,11 +1,15 @@
 package vn.lnt.saas_customer_communication_platform.feature.widget.controller;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.MediaType;
 import org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 import vn.lnt.saas_customer_communication_platform.feature.auth.entity.User;
@@ -19,8 +23,13 @@ import vn.lnt.saas_customer_communication_platform.feature.company.dto.CreateCom
 import vn.lnt.saas_customer_communication_platform.feature.company.entity.Company;
 import vn.lnt.saas_customer_communication_platform.feature.company.repository.CompanyRepository;
 import vn.lnt.saas_customer_communication_platform.feature.company.service.CompanyService;
+import vn.lnt.saas_customer_communication_platform.feature.widget.dto.WidgetHandshakeRequest;
 
+import java.time.LocalDateTime;
+
+import static org.junit.jupiter.api.Assertions.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -28,6 +37,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class PublicWidgetControllerTest {
 
     private MockMvc mockMvc;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Autowired
     private WebApplicationContext context;
@@ -150,5 +160,114 @@ class PublicWidgetControllerTest {
         mockMvc.perform(get("/api/v1/public/widget/config")
                         .param("channelKey", "chk_nonexistent123456"))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void handshakeCreatesNewVisitorAndUpdatesChannelConnectionTest() throws Exception {
+        WidgetHandshakeRequest request = new WidgetHandshakeRequest(validChannelKey, null, null, null);
+
+        MvcResult result = mockMvc.perform(post("/api/v1/public/widget/handshake")
+                        .header("Origin", "https://customer-site.com")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.statusCode").value(200))
+                .andExpect(jsonPath("$.data.channelKey").value(validChannelKey))
+                .andExpect(jsonPath("$.data.channelName").value("Open Web Channel"))
+                .andExpect(jsonPath("$.data.welcomeMessage").value("Chào mừng bạn!"))
+                .andExpect(jsonPath("$.data.aiEnabled").value(true))
+                .andExpect(jsonPath("$.data.visitorId").isNotEmpty())
+                .andExpect(jsonPath("$.data.visitorToken").isNotEmpty())
+                .andExpect(jsonPath("$.data.visitorName").value("Khách truy cập"))
+                .andExpect(jsonPath("$.data.isNewVisitor").value(true))
+                .andReturn();
+
+        JsonNode root = objectMapper.readTree(result.getResponse().getContentAsString());
+        String visitorToken = root.path("data").path("visitorToken").asText();
+        assertTrue(visitorToken.startsWith("vst_"));
+
+        // Kiểm tra Channel đã được cập nhật firstConnectedAt và lastSeenAt
+        Channel updatedChannel = channelRepository.findByChannelKey(validChannelKey).orElseThrow();
+        assertNotNull(updatedChannel.getFirstConnectedAt());
+        assertNotNull(updatedChannel.getLastSeenAt());
+    }
+
+    @Test
+    void handshakeRestoresExistingVisitorAndUpdatesVisitorInfoTest() throws Exception {
+        // Lần 1: Handshake tạo visitor mới
+        WidgetHandshakeRequest firstReq = new WidgetHandshakeRequest(restrictedChannelKey, null, "Nguyễn Văn A", "a@example.com");
+
+        MvcResult firstResult = mockMvc.perform(post("/api/v1/public/widget/handshake")
+                        .header("Origin", "https://shop.example.com")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(firstReq)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.isNewVisitor").value(true))
+                .andExpect(jsonPath("$.data.visitorName").value("Nguyễn Văn A"))
+                .andExpect(jsonPath("$.data.visitorEmail").value("a@example.com"))
+                .andReturn();
+
+        JsonNode firstData = objectMapper.readTree(firstResult.getResponse().getContentAsString()).path("data");
+        long firstVisitorId = firstData.path("visitorId").asLong();
+        String visitorToken = firstData.path("visitorToken").asText();
+
+        Channel channelAfterFirst = channelRepository.findByChannelKey(restrictedChannelKey).orElseThrow();
+        LocalDateTime firstConnectedAt = channelAfterFirst.getFirstConnectedAt();
+        assertNotNull(firstConnectedAt);
+
+        // Lần 2: Handshake gửi lại visitorToken cũ, cập nhật tên mới
+        WidgetHandshakeRequest secondReq = new WidgetHandshakeRequest(restrictedChannelKey, visitorToken, "Nguyễn Văn A (VIP)", null);
+
+        mockMvc.perform(post("/api/v1/public/widget/handshake")
+                        .header("Origin", "https://shop.example.com")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(secondReq)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.isNewVisitor").value(false))
+                .andExpect(jsonPath("$.data.visitorId").value(firstVisitorId))
+                .andExpect(jsonPath("$.data.visitorToken").value(visitorToken))
+                .andExpect(jsonPath("$.data.visitorName").value("Nguyễn Văn A (VIP)"))
+                .andExpect(jsonPath("$.data.visitorEmail").value("a@example.com"));
+
+        // Kiểm tra firstConnectedAt của Channel vẫn giữ nguyên không bị ghi đè
+        Channel channelAfterSecond = channelRepository.findByChannelKey(restrictedChannelKey).orElseThrow();
+        assertEquals(firstConnectedAt, channelAfterSecond.getFirstConnectedAt());
+        assertNotNull(channelAfterSecond.getLastSeenAt());
+    }
+
+    @Test
+    void handshakeWithUnknownVisitorTokenCreatesNewVisitorTest() throws Exception {
+        WidgetHandshakeRequest request = new WidgetHandshakeRequest(validChannelKey, "vst_invalid_or_expired_token", null, null);
+
+        mockMvc.perform(post("/api/v1/public/widget/handshake")
+                        .header("Origin", "https://anywebsite.vn")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.isNewVisitor").value(true))
+                .andExpect(jsonPath("$.data.visitorToken").isNotEmpty());
+    }
+
+    @Test
+    void handshakeFailsWhenOriginNotAllowedTest() throws Exception {
+        WidgetHandshakeRequest request = new WidgetHandshakeRequest(restrictedChannelKey, null, null, null);
+
+        mockMvc.perform(post("/api/v1/public/widget/handshake")
+                        .header("Origin", "https://evil-site.org")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Tên miền của bạn không được phép sử dụng Widget này"));
+    }
+
+    @Test
+    void handshakeFailsWhenChannelInactiveTest() throws Exception {
+        WidgetHandshakeRequest request = new WidgetHandshakeRequest(inactiveChannelKey, null, null, null);
+
+        mockMvc.perform(post("/api/v1/public/widget/handshake")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Kênh kết nối hiện không hoạt động"));
     }
 }

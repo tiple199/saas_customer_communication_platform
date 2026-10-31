@@ -4,6 +4,7 @@ import jakarta.persistence.*;
 import vn.lnt.saas_customer_communication_platform.feature.company.entity.Company;
 
 import java.time.LocalDateTime;
+import java.util.UUID;
 
 @Entity
 @Table(name = "visitors")
@@ -13,7 +14,7 @@ public class Visitor {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "visitor_token")
+    @Column(name = "visitor_token", nullable = false, unique = true, length = 64)
     private String visitorToken;
 
     private String name;
@@ -32,7 +33,18 @@ public class Visitor {
 
     @PrePersist
     protected void onCreate() {
-        this.createdAt = LocalDateTime.now();
+        if (this.visitorToken == null || this.visitorToken.isBlank()) {
+            this.visitorToken = generateVisitorToken();
+        }
+        LocalDateTime now = LocalDateTime.now();
+        this.createdAt = now;
+        if (this.lastSeenAt == null) {
+            this.lastSeenAt = now;
+        }
+    }
+
+    public static String generateVisitorToken() {
+        return "vst_" + UUID.randomUUID().toString().replace("-", "");
     }
 
     public Visitor() {
