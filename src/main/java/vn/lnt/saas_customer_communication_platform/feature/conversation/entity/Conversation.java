@@ -13,10 +13,13 @@ public class Conversation {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    private String status;
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 30)
+    private ConversationStatus status = ConversationStatus.OPEN;
 
-    @Column(name = "handling_mode")
-    private String handlingMode;
+    @Enumerated(EnumType.STRING)
+    @Column(name = "handling_mode", nullable = false, length = 30)
+    private HandlingMode handlingMode = HandlingMode.HUMAN;
 
     @Column(name = "assignee_id")
     private Long assigneeId;
@@ -40,8 +43,15 @@ public class Conversation {
 
     @PrePersist
     protected void onCreate() {
-        this.createdAt = LocalDateTime.now();
-        this.updatedAt = LocalDateTime.now();
+        if (this.status == null) {
+            this.status = ConversationStatus.OPEN;
+        }
+        if (this.handlingMode == null) {
+            this.handlingMode = HandlingMode.HUMAN;
+        }
+        LocalDateTime now = LocalDateTime.now();
+        this.createdAt = now;
+        this.updatedAt = now;
     }
 
     @PreUpdate
@@ -60,19 +70,19 @@ public class Conversation {
         this.id = id;
     }
 
-    public String getStatus() {
+    public ConversationStatus getStatus() {
         return status;
     }
 
-    public void setStatus(String status) {
+    public void setStatus(ConversationStatus status) {
         this.status = status;
     }
 
-    public String getHandlingMode() {
+    public HandlingMode getHandlingMode() {
         return handlingMode;
     }
 
-    public void setHandlingMode(String handlingMode) {
+    public void setHandlingMode(HandlingMode handlingMode) {
         this.handlingMode = handlingMode;
     }
 

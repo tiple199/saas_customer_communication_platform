@@ -23,10 +23,17 @@ import vn.lnt.saas_customer_communication_platform.feature.company.dto.CreateCom
 import vn.lnt.saas_customer_communication_platform.feature.company.entity.Company;
 import vn.lnt.saas_customer_communication_platform.feature.company.repository.CompanyRepository;
 import vn.lnt.saas_customer_communication_platform.feature.company.service.CompanyService;
+import vn.lnt.saas_customer_communication_platform.feature.conversation.entity.Conversation;
+import vn.lnt.saas_customer_communication_platform.feature.conversation.entity.ConversationMessage;
+import vn.lnt.saas_customer_communication_platform.feature.conversation.entity.ConversationStatus;
+import vn.lnt.saas_customer_communication_platform.feature.conversation.repository.ConversationMessageRepository;
+import vn.lnt.saas_customer_communication_platform.feature.conversation.repository.ConversationRepository;
 import vn.lnt.saas_customer_communication_platform.feature.widget.dto.WidgetHandshakeRequest;
+import vn.lnt.saas_customer_communication_platform.feature.widget.dto.WidgetSendMessageRequest;
 
 import java.time.LocalDateTime;
 
+import static org.hamcrest.Matchers.hasSize;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -53,6 +60,12 @@ class PublicWidgetControllerTest {
 
     @Autowired
     private ChannelRepository channelRepository;
+
+    @Autowired
+    private ConversationRepository conversationRepository;
+
+    @Autowired
+    private ConversationMessageRepository conversationMessageRepository;
 
     private String validChannelKey;
     private String restrictedChannelKey;
@@ -180,6 +193,10 @@ class PublicWidgetControllerTest {
                 .andExpect(jsonPath("$.data.visitorToken").isNotEmpty())
                 .andExpect(jsonPath("$.data.visitorName").value("Khách truy cập"))
                 .andExpect(jsonPath("$.data.isNewVisitor").value(true))
+                .andExpect(jsonPath("$.data.conversationId").isNotEmpty())
+                .andExpect(jsonPath("$.data.conversationStatus").value("OPEN"))
+                .andExpect(jsonPath("$.data.handlingMode").value("AI"))
+                .andExpect(jsonPath("$.data.isNewConversation").value(true))
                 .andReturn();
 
         JsonNode root = objectMapper.readTree(result.getResponse().getContentAsString());
@@ -205,10 +222,14 @@ class PublicWidgetControllerTest {
                 .andExpect(jsonPath("$.data.isNewVisitor").value(true))
                 .andExpect(jsonPath("$.data.visitorName").value("Nguyễn Văn A"))
                 .andExpect(jsonPath("$.data.visitorEmail").value("a@example.com"))
+                .andExpect(jsonPath("$.data.conversationStatus").value("OPEN"))
+                .andExpect(jsonPath("$.data.handlingMode").value("HUMAN"))
+                .andExpect(jsonPath("$.data.isNewConversation").value(true))
                 .andReturn();
 
         JsonNode firstData = objectMapper.readTree(firstResult.getResponse().getContentAsString()).path("data");
         long firstVisitorId = firstData.path("visitorId").asLong();
+        long firstConversationId = firstData.path("conversationId").asLong();
         String visitorToken = firstData.path("visitorToken").asText();
 
         Channel channelAfterFirst = channelRepository.findByChannelKey(restrictedChannelKey).orElseThrow();
@@ -227,7 +248,9 @@ class PublicWidgetControllerTest {
                 .andExpect(jsonPath("$.data.visitorId").value(firstVisitorId))
                 .andExpect(jsonPath("$.data.visitorToken").value(visitorToken))
                 .andExpect(jsonPath("$.data.visitorName").value("Nguyễn Văn A (VIP)"))
-                .andExpect(jsonPath("$.data.visitorEmail").value("a@example.com"));
+                .andExpect(jsonPath("$.data.visitorEmail").value("a@example.com"))
+                .andExpect(jsonPath("$.data.conversationId").value(firstConversationId))
+                .andExpect(jsonPath("$.data.isNewConversation").value(false));
 
         // Kiểm tra firstConnectedAt của Channel vẫn giữ nguyên không bị ghi đè
         Channel channelAfterSecond = channelRepository.findByChannelKey(restrictedChannelKey).orElseThrow();
@@ -269,5 +292,110 @@ class PublicWidgetControllerTest {
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("Kênh kết nối hiện không hoạt động"));
+    }
+
+    @Test
+    void restoreConversationOnWidgetReturnsConversationAndMessagesTest() throws Exception {
+        // 1. Handshake tạo Visitor + Conversation
+        WidgetHandshakeRequest handshakeReq = new WidgetHandshakeRequest(validChannelKey, null, "Trần Văn Khách", "tran@example.com");
+        MvcResult handshakeResult = mockMvc.perform(post("/api/v1/public/widget/handshake")
+                        .header("Origin", "https://customer-site.com")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(handshakeReq)))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        JsonNode handshakeData = objectMapper.readTree(handshakeResult.getResponse().getContentAsString()).path("data");
+        String visitorToken = handshakeData.path("visitorToken").asText();
+        long conversationId = handshakeData.path("conversationId").asLong();
+        long visitorId = handshakeData.path("visitorId").asLong();
+
+        // 2. Giả lập có 2 tin nhắn và cuộc hội thoại đã RESOLVED
+        Conversation conversation = conversationRepository.findById(conversationId).orElseThrow();
+        Company company = conversation.getChannel().getCompany();
+
+        ConversationMessage msg1 = new ConversationMessage();
+        msg1.setCompany(company);
+        msg1.setConversation(conversation);
+        msg1.setSenderType("VISITOR");
+        msg1.setSenderId(visitorId);
+        msg1.setMessageType("TEXT");
+        msg1.setContent("Xin chào shop, mình cần tư vấn sản phẩm");
+        conversationMessageRepository.save(msg1);
+
+        ConversationMessage msg2 = new ConversationMessage();
+        msg2.setCompany(company);
+        msg2.setConversation(conversation);
+        msg2.setSenderType("AI");
+        msg2.setSenderId(null);
+        msg2.setMessageType("TEXT");
+        msg2.setContent("Chào bạn! Shop có thể giúp gì cho bạn ạ?");
+        conversationMessageRepository.save(msg2);
+
+        conversation.setStatus(ConversationStatus.RESOLVED);
+        conversation.setResolvedAt(LocalDateTime.now());
+        conversationRepository.save(conversation);
+
+        // 3. Gọi API Restore Conversation từ Widget -> Mở lại OPEN và trả về 2 tin nhắn cũ
+        mockMvc.perform(get("/api/v1/public/widget/conversations/restore")
+                        .param("channelKey", validChannelKey)
+                        .param("visitorToken", visitorToken)
+                        .header("Origin", "https://customer-site.com"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.statusCode").value(200))
+                .andExpect(jsonPath("$.data.conversation.id").value(conversationId))
+                .andExpect(jsonPath("$.data.conversation.status").value("OPEN"))
+                .andExpect(jsonPath("$.data.messages", hasSize(2)))
+                .andExpect(jsonPath("$.data.messages[0].senderType").value("VISITOR"))
+                .andExpect(jsonPath("$.data.messages[0].content").value("Xin chào shop, mình cần tư vấn sản phẩm"))
+                .andExpect(jsonPath("$.data.messages[1].senderType").value("AI"))
+                .andExpect(jsonPath("$.data.messages[1].content").value("Chào bạn! Shop có thể giúp gì cho bạn ạ?"));
+    }
+
+    @Test
+    void customerSendMessageOnWidgetSuccessTest() throws Exception {
+        // 1. Handshake tạo Visitor + Conversation
+        WidgetHandshakeRequest handshakeReq = new WidgetHandshakeRequest(validChannelKey, null, "Phạm Thị Hoa", "hoa@example.com");
+        MvcResult handshakeResult = mockMvc.perform(post("/api/v1/public/widget/handshake")
+                        .header("Origin", "https://customer-site.com")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(handshakeReq)))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        JsonNode handshakeData = objectMapper.readTree(handshakeResult.getResponse().getContentAsString()).path("data");
+        String visitorToken = handshakeData.path("visitorToken").asText();
+        long conversationId = handshakeData.path("conversationId").asLong();
+        long visitorId = handshakeData.path("visitorId").asLong();
+
+        // 2. Khách hàng gửi tin nhắn qua Widget
+        WidgetSendMessageRequest sendReq = new WidgetSendMessageRequest(
+                validChannelKey,
+                visitorToken,
+                "Shop ơi mẫu áo này còn size M không?",
+                "TEXT"
+        );
+
+        mockMvc.perform(post("/api/v1/public/widget/messages")
+                        .header("Origin", "https://customer-site.com")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(sendReq)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.statusCode").value(201))
+                .andExpect(jsonPath("$.data.conversationId").value(conversationId))
+                .andExpect(jsonPath("$.data.senderType").value("VISITOR"))
+                .andExpect(jsonPath("$.data.senderId").value(visitorId))
+                .andExpect(jsonPath("$.data.content").value("Shop ơi mẫu áo này còn size M không?"))
+                .andExpect(jsonPath("$.data.messageType").value("TEXT"))
+                .andExpect(jsonPath("$.data.createdAt").isNotEmpty());
+
+        // 3. Kiểm tra Restore lại cuộc hội thoại có chứa tin nhắn vừa gửi
+        mockMvc.perform(get("/api/v1/public/widget/conversations/restore")
+                        .param("channelKey", validChannelKey)
+                        .param("visitorToken", visitorToken)
+                        .header("Origin", "https://customer-site.com"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.messages", hasSize(1)))
+                .andExpect(jsonPath("$.data.messages[0].content").value("Shop ơi mẫu áo này còn size M không?"));
     }
 }

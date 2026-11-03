@@ -1,5 +1,8 @@
 package vn.lnt.saas_customer_communication_platform.feature.widget.dto;
 
+import vn.lnt.saas_customer_communication_platform.feature.conversation.entity.ConversationStatus;
+import vn.lnt.saas_customer_communication_platform.feature.conversation.entity.HandlingMode;
+
 import java.time.LocalDateTime;
 
 public class WidgetHandshakeResponse {
@@ -13,6 +16,10 @@ public class WidgetHandshakeResponse {
     private String visitorName;
     private String visitorEmail;
     private Boolean isNewVisitor;
+    private Long conversationId;
+    private ConversationStatus conversationStatus;
+    private HandlingMode handlingMode;
+    private Boolean isNewConversation;
     private LocalDateTime connectedAt;
 
     public WidgetHandshakeResponse() {
@@ -21,6 +28,14 @@ public class WidgetHandshakeResponse {
     public WidgetHandshakeResponse(String channelKey, String channelName, String welcomeMessage, Boolean aiEnabled,
                                    Long visitorId, String visitorToken, String visitorName, String visitorEmail,
                                    Boolean isNewVisitor, LocalDateTime connectedAt) {
+        this(channelKey, channelName, welcomeMessage, aiEnabled, visitorId, visitorToken, visitorName,
+                visitorEmail, isNewVisitor, null, null, null, null, connectedAt);
+    }
+
+    public WidgetHandshakeResponse(String channelKey, String channelName, String welcomeMessage, Boolean aiEnabled,
+                                   Long visitorId, String visitorToken, String visitorName, String visitorEmail,
+                                   Boolean isNewVisitor, Long conversationId, ConversationStatus conversationStatus,
+                                   HandlingMode handlingMode, Boolean isNewConversation, LocalDateTime connectedAt) {
         this.channelKey = channelKey;
         this.channelName = channelName;
         this.welcomeMessage = welcomeMessage;
@@ -30,6 +45,10 @@ public class WidgetHandshakeResponse {
         this.visitorName = visitorName;
         this.visitorEmail = visitorEmail;
         this.isNewVisitor = isNewVisitor;
+        this.conversationId = conversationId;
+        this.conversationStatus = conversationStatus;
+        this.handlingMode = handlingMode;
+        this.isNewConversation = isNewConversation;
         this.connectedAt = connectedAt;
     }
 
@@ -103,6 +122,38 @@ public class WidgetHandshakeResponse {
 
     public void setIsNewVisitor(Boolean isNewVisitor) {
         this.isNewVisitor = isNewVisitor;
+    }
+
+    public Long getConversationId() {
+        return conversationId;
+    }
+
+    public void setConversationId(Long conversationId) {
+        this.conversationId = conversationId;
+    }
+
+    public ConversationStatus getConversationStatus() {
+        return conversationStatus;
+    }
+
+    public void setConversationStatus(ConversationStatus conversationStatus) {
+        this.conversationStatus = conversationStatus;
+    }
+
+    public HandlingMode getHandlingMode() {
+        return handlingMode;
+    }
+
+    public void setHandlingMode(HandlingMode handlingMode) {
+        this.handlingMode = handlingMode;
+    }
+
+    public Boolean getIsNewConversation() {
+        return isNewConversation;
+    }
+
+    public void setIsNewConversation(Boolean isNewConversation) {
+        this.isNewConversation = isNewConversation;
     }
 
     public LocalDateTime getConnectedAt() {

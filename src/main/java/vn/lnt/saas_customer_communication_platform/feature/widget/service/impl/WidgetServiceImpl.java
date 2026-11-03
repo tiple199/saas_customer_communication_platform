@@ -11,28 +11,37 @@ import vn.lnt.saas_customer_communication_platform.feature.channel.entity.Channe
 import vn.lnt.saas_customer_communication_platform.feature.channel.entity.ChannelType;
 import vn.lnt.saas_customer_communication_platform.feature.channel.repository.ChannelRepository;
 import vn.lnt.saas_customer_communication_platform.feature.channel.util.DomainValidator;
+import vn.lnt.saas_customer_communication_platform.feature.conversation.dto.ConversationMessageResponse;
+import vn.lnt.saas_customer_communication_platform.feature.conversation.dto.ConversationResolutionResult;
+import vn.lnt.saas_customer_communication_platform.feature.conversation.dto.RestoreConversationResponse;
+import vn.lnt.saas_customer_communication_platform.feature.conversation.dto.VisitorResolutionResult;
+import vn.lnt.saas_customer_communication_platform.feature.conversation.entity.Conversation;
 import vn.lnt.saas_customer_communication_platform.feature.conversation.entity.Visitor;
-import vn.lnt.saas_customer_communication_platform.feature.conversation.repository.VisitorRepository;
+import vn.lnt.saas_customer_communication_platform.feature.conversation.service.ConversationService;
+import vn.lnt.saas_customer_communication_platform.feature.conversation.service.VisitorService;
 import vn.lnt.saas_customer_communication_platform.feature.widget.dto.PublicWidgetConfigResponse;
 import vn.lnt.saas_customer_communication_platform.feature.widget.dto.WidgetHandshakeRequest;
 import vn.lnt.saas_customer_communication_platform.feature.widget.dto.WidgetHandshakeResponse;
+import vn.lnt.saas_customer_communication_platform.feature.widget.dto.WidgetSendMessageRequest;
 import vn.lnt.saas_customer_communication_platform.feature.widget.service.WidgetService;
 
 import java.time.LocalDateTime;
-import java.util.Optional;
 
 @Service
 public class WidgetServiceImpl implements WidgetService {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
-    private static final String DEFAULT_VISITOR_NAME = "Khách truy cập";
 
     private final ChannelRepository channelRepository;
-    private final VisitorRepository visitorRepository;
+    private final VisitorService visitorService;
+    private final ConversationService conversationService;
 
-    public WidgetServiceImpl(ChannelRepository channelRepository, VisitorRepository visitorRepository) {
+    public WidgetServiceImpl(ChannelRepository channelRepository,
+                             VisitorService visitorService,
+                             ConversationService conversationService) {
         this.channelRepository = channelRepository;
-        this.visitorRepository = visitorRepository;
+        this.visitorService = visitorService;
+        this.conversationService = conversationService;
     }
 
     @Override
@@ -71,42 +80,19 @@ public class WidgetServiceImpl implements WidgetService {
         channel.setLastSeenAt(now);
         channelRepository.save(channel);
 
-        // Khởi tạo hoặc khôi phục phiên Visitor
-        Visitor visitor = null;
-        boolean isNewVisitor = true;
+        // Khởi tạo hoặc khôi phục phiên Visitor thông qua VisitorService của feature.conversation
+        VisitorResolutionResult visitorResult = visitorService.resolveOrCreateVisitor(
+                channel.getCompany(),
+                request.getVisitorToken(),
+                request.getName(),
+                request.getEmail()
+        );
+        Visitor visitor = visitorResult.getVisitor();
+        boolean isNewVisitor = visitorResult.isNewVisitor();
 
-        if (request.getVisitorToken() != null && !request.getVisitorToken().isBlank() && channel.getCompany() != null) {
-            Optional<Visitor> existingVisitor = visitorRepository.findByVisitorTokenAndCompanyId(
-                    request.getVisitorToken().trim(),
-                    channel.getCompany().getId()
-            );
-            if (existingVisitor.isPresent()) {
-                visitor = existingVisitor.get();
-                isNewVisitor = false;
-                visitor.setLastSeenAt(now);
-                if (request.getName() != null && !request.getName().isBlank()) {
-                    visitor.setName(request.getName().trim());
-                }
-                if (request.getEmail() != null && !request.getEmail().isBlank()) {
-                    visitor.setEmail(request.getEmail().trim());
-                }
-                visitor = visitorRepository.save(visitor);
-            }
-        }
-
-        if (visitor == null) {
-            visitor = new Visitor();
-            visitor.setVisitorToken(Visitor.generateVisitorToken());
-            visitor.setCompany(channel.getCompany());
-            visitor.setLastSeenAt(now);
-            visitor.setName(request.getName() != null && !request.getName().isBlank()
-                    ? request.getName().trim()
-                    : DEFAULT_VISITOR_NAME);
-            if (request.getEmail() != null && !request.getEmail().isBlank()) {
-                visitor.setEmail(request.getEmail().trim());
-            }
-            visitor = visitorRepository.save(visitor);
-        }
+        // Khởi tạo hoặc khôi phục Conversation đang hoạt động cho Visitor trên Channel này
+        ConversationResolutionResult conversationResult = conversationService.getOrCreateActiveConversation(channel, visitor);
+        Conversation conversation = conversationResult.getConversation();
 
         String welcomeMsg = webConfig != null ? webConfig.getWelcomeMessage() : null;
         return new WidgetHandshakeResponse(
@@ -119,7 +105,45 @@ public class WidgetServiceImpl implements WidgetService {
                 visitor.getName(),
                 visitor.getEmail(),
                 isNewVisitor,
+                conversation.getId(),
+                conversation.getStatus(),
+                conversation.getHandlingMode(),
+                conversationResult.isNewConversation(),
                 now
+        );
+    }
+
+    @Override
+    @Transactional
+    public RestoreConversationResponse restoreConversation(String channelKey, String visitorToken, String requestOrigin) {
+        Channel channel = validateAndGetWebChannel(channelKey);
+        WebChannelConfig webConfig = parseWebConfig(channel);
+        validateOrigin(requestOrigin, webConfig);
+
+        Visitor visitor = visitorService.getVisitorByToken(channel.getCompany().getId(), visitorToken);
+        return conversationService.restoreVisitorConversation(channel, visitor);
+    }
+
+    @Override
+    @Transactional
+    public ConversationMessageResponse sendMessage(WidgetSendMessageRequest request, String requestOrigin) {
+        if (request == null) {
+            throw new InvalidOperationException("Dữ liệu tin nhắn không được để trống");
+        }
+
+        Channel channel = validateAndGetWebChannel(request.getChannelKey());
+        WebChannelConfig webConfig = parseWebConfig(channel);
+        validateOrigin(requestOrigin, webConfig);
+
+        channel.setLastSeenAt(LocalDateTime.now());
+        channelRepository.save(channel);
+
+        Visitor visitor = visitorService.getVisitorByToken(channel.getCompany().getId(), request.getVisitorToken());
+        return conversationService.sendVisitorMessage(
+                channel,
+                visitor,
+                request.getContent(),
+                request.getMessageType()
         );
     }
 
