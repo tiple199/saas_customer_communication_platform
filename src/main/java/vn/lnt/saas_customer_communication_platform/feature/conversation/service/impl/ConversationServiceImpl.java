@@ -4,6 +4,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import vn.lnt.saas_customer_communication_platform.config.tenant.TenantContext;
@@ -15,6 +16,7 @@ import vn.lnt.saas_customer_communication_platform.feature.auth.repository.UserR
 import vn.lnt.saas_customer_communication_platform.feature.channel.entity.Channel;
 import vn.lnt.saas_customer_communication_platform.feature.channel.entity.ChannelStatus;
 import vn.lnt.saas_customer_communication_platform.feature.channel.repository.ChannelRepository;
+import vn.lnt.saas_customer_communication_platform.feature.company.entity.Company;
 import vn.lnt.saas_customer_communication_platform.feature.company.entity.CompanyMember;
 import vn.lnt.saas_customer_communication_platform.feature.company.entity.CompanyMemberStatus;
 import vn.lnt.saas_customer_communication_platform.feature.company.repository.CompanyMemberRepository;
@@ -23,6 +25,7 @@ import vn.lnt.saas_customer_communication_platform.feature.conversation.dto.Conv
 import vn.lnt.saas_customer_communication_platform.feature.conversation.dto.ConversationResponse;
 import vn.lnt.saas_customer_communication_platform.feature.conversation.dto.CreateConversationRequest;
 import vn.lnt.saas_customer_communication_platform.feature.conversation.dto.RestoreConversationResponse;
+import vn.lnt.saas_customer_communication_platform.feature.conversation.dto.SendConversationMessageRequest;
 import vn.lnt.saas_customer_communication_platform.feature.conversation.entity.Conversation;
 import vn.lnt.saas_customer_communication_platform.feature.conversation.entity.ConversationMessage;
 import vn.lnt.saas_customer_communication_platform.feature.conversation.entity.ConversationStatus;
@@ -47,19 +50,22 @@ public class ConversationServiceImpl implements ConversationService {
     private final VisitorRepository visitorRepository;
     private final UserRepository userRepository;
     private final CompanyMemberRepository companyMemberRepository;
+    private final SimpMessagingTemplate messagingTemplate;
 
     public ConversationServiceImpl(ConversationRepository conversationRepository,
                                    ConversationMessageRepository conversationMessageRepository,
                                    ChannelRepository channelRepository,
                                    VisitorRepository visitorRepository,
                                    UserRepository userRepository,
-                                   CompanyMemberRepository companyMemberRepository) {
+                                   CompanyMemberRepository companyMemberRepository,
+                                   SimpMessagingTemplate messagingTemplate) {
         this.conversationRepository = conversationRepository;
         this.conversationMessageRepository = conversationMessageRepository;
         this.channelRepository = channelRepository;
         this.visitorRepository = visitorRepository;
         this.userRepository = userRepository;
         this.companyMemberRepository = companyMemberRepository;
+        this.messagingTemplate = messagingTemplate;
     }
 
     @Override
@@ -75,7 +81,9 @@ public class ConversationServiceImpl implements ConversationService {
                 Boolean.TRUE.equals(channel.getAiEnabled()) ? HandlingMode.AI : HandlingMode.HUMAN
         );
 
-        return conversationRepository.save(conversation);
+        Conversation saved = conversationRepository.save(conversation);
+        broadcastConversationUpdate(saved);
+        return saved;
     }
 
     @Override
@@ -151,20 +159,103 @@ public class ConversationServiceImpl implements ConversationService {
             conversation = conversationRepository.save(conversation);
         }
 
+        return saveConversationMessage(
+                channel.getCompany(),
+                conversation,
+                "VISITOR",
+                visitor.getId(),
+                content,
+                messageType
+        );
+    }
+
+    @Override
+    @Transactional
+    public ConversationMessageResponse sendStaffMessage(String currentUserEmail, Long companyId, Long conversationId,
+                                                        SendConversationMessageRequest request) {
+        if (request == null || request.getContent() == null || request.getContent().isBlank()) {
+            throw new InvalidOperationException("Nội dung tin nhắn không được để trống");
+        }
+
+        User currentUser = getUserByEmail(currentUserEmail);
+        Long targetCompanyId = resolveTargetCompanyId(companyId);
+        validateActiveCompanyMember(currentUser.getId(), targetCompanyId);
+
+        Conversation conversation = conversationRepository.findByIdAndChannelCompanyId(conversationId, targetCompanyId)
+                .orElseThrow(() -> new ResourceNotFoundException("Conversation", "id", conversationId));
+
+        if (conversation.getStatus() == ConversationStatus.CLOSED) {
+            throw new InvalidOperationException("Cuộc hội thoại đã đóng hoàn toàn, không thể gửi tin nhắn");
+        }
+
+        if (conversation.getStatus() != ConversationStatus.OPEN) {
+            conversation.setStatus(ConversationStatus.OPEN);
+            conversation.setResolvedAt(null);
+        }
+
+        // Tự động gán nhân viên đang trả lời nếu cuộc hội thoại chưa có người phụ trách và chuyển sang HUMAN
+        if (conversation.getAssigneeId() == null) {
+            conversation.setAssigneeId(currentUser.getId());
+        }
+        conversation.setHandlingMode(HandlingMode.HUMAN);
+        conversation.setUpdatedAt(LocalDateTime.now());
+        conversation = conversationRepository.save(conversation);
+
+        Company company = conversation.getChannel() != null ? conversation.getChannel().getCompany() : null;
+        return saveConversationMessage(
+                company,
+                conversation,
+                "STAFF",
+                currentUser.getId(),
+                request.getContent(),
+                request.getMessageType()
+        );
+    }
+
+    private ConversationMessageResponse saveConversationMessage(Company company, Conversation conversation,
+                                                                String senderType, Long senderId,
+                                                                String content, String messageType) {
         String normalizedType = (messageType == null || messageType.isBlank())
                 ? "TEXT"
                 : messageType.trim().toUpperCase();
 
         ConversationMessage message = new ConversationMessage();
-        message.setCompany(channel.getCompany());
+        message.setCompany(company);
         message.setConversation(conversation);
-        message.setSenderType("VISITOR");
-        message.setSenderId(visitor.getId());
+        message.setSenderType(senderType);
+        message.setSenderId(senderId);
         message.setContent(content.trim());
         message.setMessageType(normalizedType);
 
         ConversationMessage savedMessage = conversationMessageRepository.save(message);
-        return ConversationMessageResponse.fromEntity(savedMessage);
+        ConversationMessageResponse response = ConversationMessageResponse.fromEntity(savedMessage);
+
+        // Phát realtime tin nhắn tới cả Customer (Widget) và Staff đang mở cuộc hội thoại này
+        try {
+            messagingTemplate.convertAndSend("/topic/conversations/" + conversation.getId(), response);
+        } catch (Exception ignored) {
+        }
+
+        // Phát realtime cập nhật cuộc hội thoại tới danh sách Hộp thư của Staff trong công ty
+        broadcastConversationUpdate(conversation);
+
+        return response;
+    }
+
+    private void broadcastConversationUpdate(Conversation conversation) {
+        if (conversation == null) {
+            return;
+        }
+        try {
+            ConversationResponse convResp = ConversationResponse.fromEntity(conversation);
+            if (convResp.getCompanyId() != null) {
+                messagingTemplate.convertAndSend(
+                        "/topic/companies/" + convResp.getCompanyId() + "/conversations",
+                        convResp
+                );
+            }
+        } catch (Exception ignored) {
+        }
     }
 
     @Override
@@ -181,6 +272,7 @@ public class ConversationServiceImpl implements ConversationService {
             conversation.setStatus(ConversationStatus.OPEN);
             conversation.setResolvedAt(null);
             conversation = conversationRepository.save(conversation);
+            broadcastConversationUpdate(conversation);
         }
 
         List<ConversationMessageResponse> messages = getConversationMessages(conversation.getId());
@@ -198,6 +290,59 @@ public class ConversationServiceImpl implements ConversationService {
                 .orElseThrow(() -> new ResourceNotFoundException("Conversation", "id", conversationId));
 
         return getConversationMessages(conversation.getId());
+    }
+
+    @Override
+    @Transactional
+    public ConversationResponse assignStaff(String currentUserEmail, Long companyId, Long conversationId, Long assigneeId) {
+        User currentUser = getUserByEmail(currentUserEmail);
+        Long targetCompanyId = resolveTargetCompanyId(companyId);
+        validateActiveCompanyMember(currentUser.getId(), targetCompanyId);
+
+        Conversation conversation = conversationRepository.findByIdAndChannelCompanyId(conversationId, targetCompanyId)
+                .orElseThrow(() -> new ResourceNotFoundException("Conversation", "id", conversationId));
+
+        Long targetAssigneeId = (assigneeId != null) ? assigneeId : currentUser.getId();
+        validateActiveCompanyMember(targetAssigneeId, targetCompanyId);
+
+        conversation.setAssigneeId(targetAssigneeId);
+        conversation.setHandlingMode(HandlingMode.HUMAN);
+        if (conversation.getStatus() == ConversationStatus.PENDING) {
+            conversation.setStatus(ConversationStatus.OPEN);
+        }
+
+        Conversation saved = conversationRepository.save(conversation);
+        broadcastConversationUpdate(saved);
+        return ConversationResponse.fromEntity(saved);
+    }
+
+    @Override
+    @Transactional
+    public ConversationResponse updateConversationStatus(String currentUserEmail, Long companyId,
+                                                         Long conversationId, ConversationStatus status) {
+        if (status == null) {
+            throw new InvalidOperationException("Trạng thái cuộc hội thoại không được để trống");
+        }
+
+        User currentUser = getUserByEmail(currentUserEmail);
+        Long targetCompanyId = resolveTargetCompanyId(companyId);
+        validateActiveCompanyMember(currentUser.getId(), targetCompanyId);
+
+        Conversation conversation = conversationRepository.findByIdAndChannelCompanyId(conversationId, targetCompanyId)
+                .orElseThrow(() -> new ResourceNotFoundException("Conversation", "id", conversationId));
+
+        conversation.setStatus(status);
+        if (status == ConversationStatus.RESOLVED || status == ConversationStatus.CLOSED) {
+            if (conversation.getResolvedAt() == null) {
+                conversation.setResolvedAt(LocalDateTime.now());
+            }
+        } else {
+            conversation.setResolvedAt(null);
+        }
+
+        Conversation saved = conversationRepository.save(conversation);
+        broadcastConversationUpdate(saved);
+        return ConversationResponse.fromEntity(saved);
     }
 
     private List<ConversationMessageResponse> getConversationMessages(Long conversationId) {

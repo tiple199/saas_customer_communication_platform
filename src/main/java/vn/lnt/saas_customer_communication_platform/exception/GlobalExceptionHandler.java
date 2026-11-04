@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.NoHandlerFoundException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import org.springframework.security.authentication.BadCredentialsException;
 
@@ -111,6 +112,17 @@ public class GlobalExceptionHandler {
                                 ex.getHttpMethod(), ex.getRequestURL());
                 String message = String.format("Không tìm thấy endpoint '%s %s'",
                                 ex.getHttpMethod(), ex.getRequestURL());
+                return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                                .body(ApiResponse.notFound(message));
+        }
+
+        @ExceptionHandler(NoResourceFoundException.class)
+        public ResponseEntity<ApiResponse<Void>> handleNoResourceFound(NoResourceFoundException ex) {
+                log.warn("NoResourceFoundException: không tìm thấy endpoint '{}' '/{}'",
+                                ex.getHttpMethod(), ex.getResourcePath());
+                String message = String.format(
+                                "Không tìm thấy endpoint '%s /%s' (Vui lòng khởi động lại Backend nếu bạn vừa cập nhật mã nguồn)",
+                                ex.getHttpMethod(), ex.getResourcePath());
                 return ResponseEntity.status(HttpStatus.NOT_FOUND)
                                 .body(ApiResponse.notFound(message));
         }

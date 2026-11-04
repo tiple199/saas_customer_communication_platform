@@ -8,6 +8,7 @@ import vn.lnt.saas_customer_communication_platform.feature.conversation.dto.Conv
 import vn.lnt.saas_customer_communication_platform.feature.conversation.dto.ConversationResponse;
 import vn.lnt.saas_customer_communication_platform.feature.conversation.dto.CreateConversationRequest;
 import vn.lnt.saas_customer_communication_platform.feature.conversation.dto.RestoreConversationResponse;
+import vn.lnt.saas_customer_communication_platform.feature.conversation.dto.SendConversationMessageRequest;
 import vn.lnt.saas_customer_communication_platform.feature.conversation.entity.Conversation;
 import vn.lnt.saas_customer_communication_platform.feature.conversation.entity.ConversationStatus;
 import vn.lnt.saas_customer_communication_platform.feature.conversation.entity.Visitor;
@@ -48,6 +49,24 @@ public interface ConversationService {
      * Lấy danh sách lịch sử tin nhắn của một Conversation (dành cho thành viên công ty).
      */
     List<ConversationMessageResponse> getMessagesByConversationId(String currentUserEmail, Long companyId, Long conversationId);
+
+    /**
+     * Gán nhân viên (Staff) phụ trách cuộc hội thoại.
+     * Nếu assigneeId = null thì tự động gán cho nhân viên đang đăng nhập (Self-assign).
+     */
+    ConversationResponse assignStaff(String currentUserEmail, Long companyId, Long conversationId, Long assigneeId);
+
+    /**
+     * Nhân viên (Staff) gửi tin nhắn trả lời khách hàng trong cuộc hội thoại.
+     */
+    ConversationMessageResponse sendStaffMessage(String currentUserEmail, Long companyId, Long conversationId,
+                                                 SendConversationMessageRequest request);
+
+    /**
+     * Cập nhật trạng thái cuộc hội thoại (OPEN, PENDING, RESOLVED, CLOSED).
+     */
+    ConversationResponse updateConversationStatus(String currentUserEmail, Long companyId,
+                                                  Long conversationId, ConversationStatus status);
 
     /**
      * Tạo hoặc lấy Conversation đang hoạt động cho Visitor & Channel thuộc công ty (dành cho thành viên công ty).

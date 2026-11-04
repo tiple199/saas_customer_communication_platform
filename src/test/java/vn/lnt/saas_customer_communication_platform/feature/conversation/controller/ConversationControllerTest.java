@@ -23,7 +23,10 @@ import vn.lnt.saas_customer_communication_platform.feature.company.dto.CreateCom
 import vn.lnt.saas_customer_communication_platform.feature.company.entity.Company;
 import vn.lnt.saas_customer_communication_platform.feature.company.repository.CompanyRepository;
 import vn.lnt.saas_customer_communication_platform.feature.company.service.CompanyService;
+import vn.lnt.saas_customer_communication_platform.feature.conversation.dto.AssignConversationRequest;
 import vn.lnt.saas_customer_communication_platform.feature.conversation.dto.CreateConversationRequest;
+import vn.lnt.saas_customer_communication_platform.feature.conversation.dto.SendConversationMessageRequest;
+import vn.lnt.saas_customer_communication_platform.feature.conversation.dto.UpdateConversationStatusRequest;
 import vn.lnt.saas_customer_communication_platform.feature.conversation.entity.Conversation;
 import vn.lnt.saas_customer_communication_platform.feature.conversation.entity.ConversationMessage;
 import vn.lnt.saas_customer_communication_platform.feature.conversation.entity.ConversationStatus;
@@ -39,6 +42,7 @@ import static org.hamcrest.Matchers.hasSize;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -251,6 +255,129 @@ class ConversationControllerTest {
                 .andExpect(jsonPath("$.data", hasSize(1)))
                 .andExpect(jsonPath("$.data[0].senderType").value("VISITOR"))
                 .andExpect(jsonPath("$.data[0].content").value("Cho mình hỏi thêm về bảo hành"));
+    }
+
+    @Test
+    void assignStaffToConversationSuccessTest() throws Exception {
+        CreateConversationRequest createReq = new CreateConversationRequest(aiChannel.getId(), visitor.getId());
+        MvcResult createResult = mockMvc.perform(post("/api/v1/conversations")
+                        .with(jwt().jwt(j -> j.subject("convowner@example.com")))
+                        .param("companyId", companyId.toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(createReq)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.handlingMode").value("AI"))
+                .andReturn();
+
+        long conversationId = objectMapper.readTree(createResult.getResponse().getContentAsString())
+                .path("data").path("id").asLong();
+
+        User owner = userRepository.findByEmail("convowner@example.com").orElseThrow();
+        User stranger = userRepository.findByEmail("convstranger@example.com").orElseThrow();
+
+        // 1. Gán Staff hợp lệ (cùng công ty) -> assigneeId được cập nhật và handlingMode chuyển sang HUMAN
+        AssignConversationRequest assignReq = new AssignConversationRequest(owner.getId());
+        mockMvc.perform(post("/api/v1/conversations/" + conversationId + "/assign")
+                        .with(jwt().jwt(j -> j.subject("convowner@example.com")))
+                        .param("companyId", companyId.toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(assignReq)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.statusCode").value(200))
+                .andExpect(jsonPath("$.data.id").value(conversationId))
+                .andExpect(jsonPath("$.data.assigneeId").value(owner.getId()))
+                .andExpect(jsonPath("$.data.handlingMode").value("HUMAN"));
+
+        // 2. Gán cho người không thuộc công ty -> báo lỗi 400
+        AssignConversationRequest invalidAssignReq = new AssignConversationRequest(stranger.getId());
+        mockMvc.perform(post("/api/v1/conversations/" + conversationId + "/assign")
+                        .with(jwt().jwt(j -> j.subject("convowner@example.com")))
+                        .param("companyId", companyId.toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(invalidAssignReq)))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void staffSendMessageReplySuccessTest() throws Exception {
+        CreateConversationRequest createReq = new CreateConversationRequest(aiChannel.getId(), visitor.getId());
+        MvcResult createResult = mockMvc.perform(post("/api/v1/conversations")
+                        .with(jwt().jwt(j -> j.subject("convowner@example.com")))
+                        .param("companyId", companyId.toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(createReq)))
+                .andExpect(status().isCreated())
+                .andReturn();
+
+        long conversationId = objectMapper.readTree(createResult.getResponse().getContentAsString())
+                .path("data").path("id").asLong();
+
+        User owner = userRepository.findByEmail("convowner@example.com").orElseThrow();
+
+        // Staff gửi tin nhắn trả lời khách hàng
+        SendConversationMessageRequest replyReq = new SendConversationMessageRequest(
+                "Chào bạn, nhân viên hỗ trợ xin giải đáp thắc mắc của bạn ạ!",
+                "TEXT"
+        );
+
+        mockMvc.perform(post("/api/v1/conversations/" + conversationId + "/messages")
+                        .with(jwt().jwt(j -> j.subject("convowner@example.com")))
+                        .param("companyId", companyId.toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(replyReq)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.statusCode").value(201))
+                .andExpect(jsonPath("$.data.conversationId").value(conversationId))
+                .andExpect(jsonPath("$.data.senderType").value("STAFF"))
+                .andExpect(jsonPath("$.data.senderId").value(owner.getId()))
+                .andExpect(jsonPath("$.data.content").value("Chào bạn, nhân viên hỗ trợ xin giải đáp thắc mắc của bạn ạ!"))
+                .andExpect(jsonPath("$.data.messageType").value("TEXT"));
+
+        // Kiểm tra Conversation đã tự động gán assigneeId và chuyển sang HUMAN
+        mockMvc.perform(get("/api/v1/conversations/" + conversationId)
+                        .with(jwt().jwt(j -> j.subject("convowner@example.com")))
+                        .param("companyId", companyId.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.assigneeId").value(owner.getId()))
+                .andExpect(jsonPath("$.data.handlingMode").value("HUMAN"));
+    }
+
+    @Test
+    void updateConversationStatusSuccessTest() throws Exception {
+        CreateConversationRequest createReq = new CreateConversationRequest(aiChannel.getId(), visitor.getId());
+        MvcResult createResult = mockMvc.perform(post("/api/v1/conversations")
+                        .with(jwt().jwt(j -> j.subject("convowner@example.com")))
+                        .param("companyId", companyId.toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(createReq)))
+                .andExpect(status().isCreated())
+                .andReturn();
+
+        long conversationId = objectMapper.readTree(createResult.getResponse().getContentAsString())
+                .path("data").path("id").asLong();
+
+        // Chuyển trạng thái sang RESOLVED -> resolvedAt được tự động gán
+        UpdateConversationStatusRequest resolveReq = new UpdateConversationStatusRequest(ConversationStatus.RESOLVED);
+        mockMvc.perform(patch("/api/v1/conversations/" + conversationId + "/status")
+                        .with(jwt().jwt(j -> j.subject("convowner@example.com")))
+                        .param("companyId", companyId.toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(resolveReq)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.statusCode").value(200))
+                .andExpect(jsonPath("$.data.id").value(conversationId))
+                .andExpect(jsonPath("$.data.status").value("RESOLVED"))
+                .andExpect(jsonPath("$.data.resolvedAt").isNotEmpty());
+
+        // Chuyển trạng thái sang CLOSED
+        UpdateConversationStatusRequest closeReq = new UpdateConversationStatusRequest(ConversationStatus.CLOSED);
+        mockMvc.perform(patch("/api/v1/conversations/" + conversationId + "/status")
+                        .with(jwt().jwt(j -> j.subject("convowner@example.com")))
+                        .param("companyId", companyId.toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(closeReq)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("CLOSED"));
     }
 }
 
