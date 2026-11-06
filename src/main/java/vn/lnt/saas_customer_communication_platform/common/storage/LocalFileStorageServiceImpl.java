@@ -121,6 +121,35 @@ public class LocalFileStorageServiceImpl implements FileStorageService {
     }
 
     @Override
+    public String readTextPreview(String fileName, String subDirectory, int maxChars) {
+        if (fileName == null || fileName.isBlank()) {
+            return "";
+        }
+        try {
+            Path targetDir = this.baseStorageLocation;
+            if (subDirectory != null && !subDirectory.isBlank()) {
+                targetDir = targetDir.resolve(subDirectory).normalize();
+            }
+            Path filePath = targetDir.resolve(fileName).normalize();
+            if (!filePath.startsWith(this.baseStorageLocation) || !Files.exists(filePath)) {
+                return "";
+            }
+
+            int limit = maxChars > 0 ? maxChars : 50000;
+            try (java.io.BufferedReader reader = Files.newBufferedReader(filePath, java.nio.charset.StandardCharsets.UTF_8)) {
+                char[] buffer = new char[limit];
+                int read = reader.read(buffer, 0, limit);
+                if (read > 0) {
+                    return new String(buffer, 0, read);
+                }
+            }
+            return "";
+        } catch (Exception ex) {
+            return "Không thể đọc nội dung file văn bản: " + ex.getMessage();
+        }
+    }
+
+    @Override
     public void deleteFile(String fileName, String subDirectory) {
         if (fileName == null || fileName.isBlank()) {
             return;

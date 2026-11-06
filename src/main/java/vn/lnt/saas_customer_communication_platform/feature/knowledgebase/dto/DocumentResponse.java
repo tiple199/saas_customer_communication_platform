@@ -49,7 +49,7 @@ public class DocumentResponse {
                 doc.getFileUrl(),
                 doc.getFileType(),
                 doc.getFileSize(),
-                doc.getStatus(),
+                doc.getStatus() != null ? doc.getStatus().name() : null,
                 chunkCount,
                 doc.getKnowledgeBase() != null ? doc.getKnowledgeBase().getId() : null,
                 doc.getKnowledgeBase() != null ? doc.getKnowledgeBase().getName() : null,

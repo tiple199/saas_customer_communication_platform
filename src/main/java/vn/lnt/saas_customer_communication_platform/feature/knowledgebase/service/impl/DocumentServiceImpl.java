@@ -22,9 +22,14 @@ import vn.lnt.saas_customer_communication_platform.feature.company.entity.Compan
 import vn.lnt.saas_customer_communication_platform.feature.company.entity.CompanyMemberStatus;
 import vn.lnt.saas_customer_communication_platform.feature.company.repository.CompanyMemberRepository;
 import vn.lnt.saas_customer_communication_platform.feature.company.repository.CompanyRepository;
+import vn.lnt.saas_customer_communication_platform.feature.knowledgebase.dto.DocumentPreviewResponse;
 import vn.lnt.saas_customer_communication_platform.feature.knowledgebase.dto.DocumentResponse;
 import vn.lnt.saas_customer_communication_platform.feature.knowledgebase.entity.Document;
+import vn.lnt.saas_customer_communication_platform.feature.knowledgebase.entity.DocumentChunk;
+import vn.lnt.saas_customer_communication_platform.feature.knowledgebase.entity.DocumentStatus;
 import vn.lnt.saas_customer_communication_platform.feature.knowledgebase.entity.KnowledgeBase;
+import vn.lnt.saas_customer_communication_platform.feature.knowledgebase.parser.DocumentParserManager;
+import vn.lnt.saas_customer_communication_platform.feature.knowledgebase.parser.TextChunker;
 import vn.lnt.saas_customer_communication_platform.feature.knowledgebase.repository.DocumentChunkRepository;
 import vn.lnt.saas_customer_communication_platform.feature.knowledgebase.repository.DocumentRepository;
 import vn.lnt.saas_customer_communication_platform.feature.knowledgebase.repository.KnowledgeBaseRepository;
@@ -43,6 +48,8 @@ public class DocumentServiceImpl implements DocumentService {
     private final UserRepository userRepository;
     private final CompanyRepository companyRepository;
     private final CompanyMemberRepository companyMemberRepository;
+    private final DocumentParserManager documentParserManager;
+    private final TextChunker textChunker;
 
     public DocumentServiceImpl(DocumentRepository documentRepository,
                                DocumentChunkRepository documentChunkRepository,
@@ -50,7 +57,9 @@ public class DocumentServiceImpl implements DocumentService {
                                FileStorageService fileStorageService,
                                UserRepository userRepository,
                                CompanyRepository companyRepository,
-                               CompanyMemberRepository companyMemberRepository) {
+                               CompanyMemberRepository companyMemberRepository,
+                               DocumentParserManager documentParserManager,
+                               TextChunker textChunker) {
         this.documentRepository = documentRepository;
         this.documentChunkRepository = documentChunkRepository;
         this.knowledgeBaseRepository = knowledgeBaseRepository;
@@ -58,6 +67,8 @@ public class DocumentServiceImpl implements DocumentService {
         this.userRepository = userRepository;
         this.companyRepository = companyRepository;
         this.companyMemberRepository = companyMemberRepository;
+        this.documentParserManager = documentParserManager;
+        this.textChunker = textChunker;
     }
 
     @Override
@@ -81,7 +92,7 @@ public class DocumentServiceImpl implements DocumentService {
         document.setFileUrl(storedFileInfo.getStoredFileName());
         document.setFileType(storedFileInfo.getFileType());
         document.setFileSize(storedFileInfo.getFileSize());
-        document.setStatus("UPLOADED");
+        document.setStatus(DocumentStatus.UPLOADED);
         document.setCompany(company);
         document.setKnowledgeBase(knowledgeBase);
 
@@ -144,6 +155,123 @@ public class DocumentServiceImpl implements DocumentService {
     }
 
     @Override
+    @Transactional
+    public DocumentResponse processDocument(String currentUserEmail, Long companyId, Long id) {
+        User currentUser = getUserByEmail(currentUserEmail);
+        Long targetCompanyId = resolveTargetCompanyId(companyId);
+        validateActiveAdminOrOwner(currentUser.getId(), targetCompanyId, "Chỉ quản trị viên hoặc chủ công ty mới có quyền xử lý tài liệu");
+
+        Document document = documentRepository.findByIdAndCompanyId(id, targetCompanyId)
+                .orElseThrow(() -> new ResourceNotFoundException("Document", "id", id));
+
+        document.setStatus(DocumentStatus.PROCESSING);
+        document = documentRepository.save(document);
+
+        Long kbId = document.getKnowledgeBase() != null ? document.getKnowledgeBase().getId() : null;
+        String subDirectory = kbId != null ? "kb_" + kbId : "";
+
+        try {
+            Resource resource = fileStorageService.loadFileAsResource(document.getFileUrl(), subDirectory);
+            String extractedText = documentParserManager.parseDocument(resource.getInputStream(), document.getFileType());
+
+            if (extractedText == null || extractedText.isBlank()) {
+                document.setStatus(DocumentStatus.FAILED);
+                documentRepository.save(document);
+                throw new InvalidOperationException("Tài liệu không chứa nội dung chữ có thể bóc tách");
+            }
+
+            // Xóa sạch các chunks cũ (nếu có)
+            documentChunkRepository.deleteByDocumentId(document.getId());
+
+            // Băm nhỏ thành các chunks
+            List<String> rawChunks = textChunker.splitIntoChunks(extractedText);
+            for (int i = 0; i < rawChunks.size(); i++) {
+                DocumentChunk chunk = new DocumentChunk();
+                chunk.setDocument(document);
+                chunk.setCompany(document.getCompany());
+                chunk.setChunkIndex(i);
+                chunk.setContent(rawChunks.get(i));
+                documentChunkRepository.save(chunk);
+            }
+
+            document.setStatus(DocumentStatus.READY);
+            Document saved = documentRepository.save(document);
+            return DocumentResponse.fromEntity(saved, rawChunks.size());
+        } catch (Exception ex) {
+            document.setStatus(DocumentStatus.FAILED);
+            documentRepository.save(document);
+            throw new InvalidOperationException("Lỗi khi xử lý bóc tách tài liệu: " + ex.getMessage());
+        }
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public DocumentPreviewResponse getDocumentPreview(String currentUserEmail, Long companyId, Long id) {
+        User currentUser = getUserByEmail(currentUserEmail);
+        Long targetCompanyId = resolveTargetCompanyId(companyId);
+        validateActiveCompanyMember(currentUser.getId(), targetCompanyId);
+
+        Document document = documentRepository.findByIdAndCompanyId(id, targetCompanyId)
+                .orElseThrow(() -> new ResourceNotFoundException("Document", "id", id));
+
+        long chunkCount = documentChunkRepository.countByDocumentId(document.getId());
+
+        String fileType = document.getFileType() != null ? document.getFileType().toLowerCase().trim() : "";
+        boolean isPdf = fileType.equals("pdf");
+        boolean isText = fileType.equals("txt") || fileType.equals("md") || fileType.equals("csv") || fileType.equals("json");
+        boolean isOffice = fileType.equals("doc") || fileType.equals("docx") || fileType.equals("xls") || fileType.equals("xlsx");
+
+        String textContent = null;
+        boolean truncated = false;
+
+        // Nếu tài liệu đã được bóc tách READY thành chunks, tải trực tiếp text từ chunks
+        if (document.getStatus() == DocumentStatus.READY && chunkCount > 0) {
+            List<DocumentChunk> chunks = documentChunkRepository.findByDocumentIdOrderByChunkIndexAsc(document.getId());
+            if (!chunks.isEmpty()) {
+                StringBuilder sb = new StringBuilder();
+                int totalLen = 0;
+                for (DocumentChunk chunk : chunks) {
+                    if (totalLen + chunk.getContent().length() > 60000) {
+                        truncated = true;
+                        break;
+                    }
+                    if (sb.length() > 0) sb.append("\n\n---\n\n");
+                    sb.append(chunk.getContent());
+                    totalLen = sb.length();
+                }
+                textContent = sb.toString();
+                isText = true;
+            }
+        } else if (isText) {
+            Long kbId = document.getKnowledgeBase() != null ? document.getKnowledgeBase().getId() : null;
+            String subDirectory = kbId != null ? "kb_" + kbId : "";
+            int maxChars = 60000;
+            textContent = fileStorageService.readTextPreview(document.getFileUrl(), subDirectory, maxChars);
+            if (textContent != null && textContent.length() >= maxChars) {
+                truncated = true;
+            }
+        }
+
+        return new DocumentPreviewResponse(
+                document.getId(),
+                document.getFileName(),
+                document.getFileType(),
+                document.getFileSize(),
+                document.getStatus() != null ? document.getStatus().name() : null,
+                chunkCount,
+                document.getKnowledgeBase() != null ? document.getKnowledgeBase().getId() : null,
+                document.getKnowledgeBase() != null ? document.getKnowledgeBase().getName() : null,
+                document.getCompany() != null ? document.getCompany().getId() : null,
+                document.getCreatedAt(),
+                textContent,
+                isText,
+                isPdf,
+                isOffice,
+                truncated
+        );
+    }
+
+    @Override
     @Transactional(readOnly = true)
     public Resource downloadDocument(String currentUserEmail, Long companyId, Long id) {
         User currentUser = getUserByEmail(currentUserEmail);
@@ -179,6 +307,28 @@ public class DocumentServiceImpl implements DocumentService {
 
         // 3. Xóa bản ghi trong database
         documentRepository.delete(document);
+    }
+
+    @Override
+    @Transactional
+    public void deleteDocumentsBatch(String currentUserEmail, Long companyId, List<Long> documentIds) {
+        if (documentIds == null || documentIds.isEmpty()) {
+            return;
+        }
+
+        User currentUser = getUserByEmail(currentUserEmail);
+        Long targetCompanyId = resolveTargetCompanyId(companyId);
+        validateActiveAdminOrOwner(currentUser.getId(), targetCompanyId, "Chỉ quản trị viên hoặc chủ công ty mới có quyền xóa tài liệu");
+
+        for (Long docId : documentIds) {
+            documentRepository.findByIdAndCompanyId(docId, targetCompanyId).ifPresent(doc -> {
+                documentChunkRepository.deleteByDocumentId(docId);
+                Long kbId = doc.getKnowledgeBase() != null ? doc.getKnowledgeBase().getId() : null;
+                String subDirectory = kbId != null ? "kb_" + kbId : "";
+                fileStorageService.deleteFile(doc.getFileUrl(), subDirectory);
+                documentRepository.delete(doc);
+            });
+        }
     }
 
     private User getUserByEmail(String email) {

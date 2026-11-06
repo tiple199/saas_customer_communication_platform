@@ -25,7 +25,9 @@ public class Document {
     @Column(name = "file_size")
     private Long fileSize;
 
-    private String status;
+    @Enumerated(EnumType.STRING)
+    @Column(length = 30)
+    private DocumentStatus status = DocumentStatus.UPLOADED;
 
     @Column(name = "created_at")
     private LocalDateTime createdAt;
@@ -95,11 +97,11 @@ public class Document {
         this.fileSize = fileSize;
     }
 
-    public String getStatus() {
+    public DocumentStatus getStatus() {
         return status;
     }
 
-    public void setStatus(String status) {
+    public void setStatus(DocumentStatus status) {
         this.status = status;
     }
 

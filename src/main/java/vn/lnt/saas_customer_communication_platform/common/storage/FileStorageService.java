@@ -9,6 +9,8 @@ public interface FileStorageService {
 
     Resource loadFileAsResource(String fileName, String subDirectory);
 
+    String readTextPreview(String fileName, String subDirectory, int maxChars);
+
     void deleteFile(String fileName, String subDirectory);
 }
 

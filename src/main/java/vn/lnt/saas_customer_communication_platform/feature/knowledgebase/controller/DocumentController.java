@@ -7,6 +7,7 @@ import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.http.MediaTypeFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -14,11 +15,13 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import vn.lnt.saas_customer_communication_platform.dto.ApiResponse;
 import vn.lnt.saas_customer_communication_platform.dto.PageResponse;
+import vn.lnt.saas_customer_communication_platform.feature.knowledgebase.dto.DocumentPreviewResponse;
 import vn.lnt.saas_customer_communication_platform.feature.knowledgebase.dto.DocumentResponse;
 import vn.lnt.saas_customer_communication_platform.feature.knowledgebase.service.DocumentService;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/v1/documents")
@@ -66,6 +69,35 @@ public class DocumentController {
         return ResponseEntity.ok(ApiResponse.success("Lấy thông tin tài liệu thành công", response));
     }
 
+    @GetMapping("/{id}/preview")
+    public ResponseEntity<ApiResponse<DocumentPreviewResponse>> getDocumentPreview(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestParam(required = false) Long companyId,
+            @PathVariable Long id) {
+        String currentUserEmail = jwt != null ? jwt.getSubject() : null;
+        DocumentPreviewResponse response = documentService.getDocumentPreview(currentUserEmail, companyId, id);
+        return ResponseEntity.ok(ApiResponse.success("Lấy bản xem trước tài liệu thành công", response));
+    }
+
+    @GetMapping("/{id}/view")
+    public ResponseEntity<Resource> viewDocument(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestParam(required = false) Long companyId,
+            @PathVariable Long id) {
+        String currentUserEmail = jwt != null ? jwt.getSubject() : null;
+        DocumentResponse doc = documentService.getDocumentById(currentUserEmail, companyId, id);
+        Resource resource = documentService.downloadDocument(currentUserEmail, companyId, id);
+
+        MediaType mediaType = MediaTypeFactory.getMediaType(doc.getFileName())
+                .orElse(MediaType.APPLICATION_OCTET_STREAM);
+
+        String encodedFileName = URLEncoder.encode(doc.getFileName(), StandardCharsets.UTF_8).replaceAll("\\+", "%20");
+        return ResponseEntity.ok()
+                .contentType(mediaType)
+                .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + encodedFileName + "\"")
+                .body(resource);
+    }
+
     @GetMapping("/{id}/download")
     public ResponseEntity<Resource> downloadDocument(
             @AuthenticationPrincipal Jwt jwt,
@@ -82,6 +114,16 @@ public class DocumentController {
                 .body(resource);
     }
 
+    @PostMapping("/{id}/process")
+    public ResponseEntity<ApiResponse<DocumentResponse>> processDocument(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestParam(required = false) Long companyId,
+            @PathVariable Long id) {
+        String currentUserEmail = jwt != null ? jwt.getSubject() : null;
+        DocumentResponse response = documentService.processDocument(currentUserEmail, companyId, id);
+        return ResponseEntity.ok(ApiResponse.success("Bóc tách nội dung tài liệu và phân đoạn thành công", response));
+    }
+
     @DeleteMapping("/{id}")
     public ResponseEntity<ApiResponse<Void>> deleteDocument(
             @AuthenticationPrincipal Jwt jwt,
@@ -90,6 +132,16 @@ public class DocumentController {
         String currentUserEmail = jwt != null ? jwt.getSubject() : null;
         documentService.deleteDocument(currentUserEmail, companyId, id);
         return ResponseEntity.ok(ApiResponse.success("Xóa tài liệu thành công", null));
+    }
+
+    @PostMapping("/batch-delete")
+    public ResponseEntity<ApiResponse<Void>> deleteDocumentsBatch(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestParam(required = false) Long companyId,
+            @RequestBody List<Long> documentIds) {
+        String currentUserEmail = jwt != null ? jwt.getSubject() : null;
+        documentService.deleteDocumentsBatch(currentUserEmail, companyId, documentIds);
+        return ResponseEntity.ok(ApiResponse.success("Xóa các tài liệu đã chọn thành công", null));
     }
 }
 
