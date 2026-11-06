@@ -34,8 +34,14 @@ build/
 
 ### Application Config & Secrets ###
 src/main/resources/application.yaml
+src/main/resources/application.yml
 src/main/resources/application-*.yaml
+src/main/resources/application-*.yml
 src/main/resources/application-*.properties
+application.yaml
+application.yml
+.env
+*.env
 ### Local Project Guidelines ###
 PROJECT_RULES.md
 

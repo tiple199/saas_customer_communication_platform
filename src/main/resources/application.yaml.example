@@ -35,3 +35,9 @@ jwt:
   cookie:
     secure: false
     same-site: Lax
+
+# Cấu hình Gemini AI (Điền API Key của bạn lấy từ Google AI Studio)
+gemini:
+  api-key: YOUR_GEMINI_API_KEY_HERE
+  embedding-model: text-embedding-004
+
