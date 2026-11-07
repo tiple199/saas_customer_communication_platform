@@ -22,8 +22,10 @@ import vn.lnt.saas_customer_communication_platform.feature.company.entity.Compan
 import vn.lnt.saas_customer_communication_platform.feature.company.entity.CompanyMemberStatus;
 import vn.lnt.saas_customer_communication_platform.feature.company.repository.CompanyMemberRepository;
 import vn.lnt.saas_customer_communication_platform.feature.company.repository.CompanyRepository;
+import vn.lnt.saas_customer_communication_platform.feature.knowledgebase.dto.DocumentChunkSearchResult;
 import vn.lnt.saas_customer_communication_platform.feature.knowledgebase.dto.DocumentPreviewResponse;
 import vn.lnt.saas_customer_communication_platform.feature.knowledgebase.dto.DocumentResponse;
+import vn.lnt.saas_customer_communication_platform.feature.knowledgebase.embedding.EmbeddingService;
 import vn.lnt.saas_customer_communication_platform.feature.knowledgebase.entity.Document;
 import vn.lnt.saas_customer_communication_platform.feature.knowledgebase.entity.DocumentChunk;
 import vn.lnt.saas_customer_communication_platform.feature.knowledgebase.entity.DocumentStatus;
@@ -35,6 +37,8 @@ import vn.lnt.saas_customer_communication_platform.feature.knowledgebase.reposit
 import vn.lnt.saas_customer_communication_platform.feature.knowledgebase.repository.KnowledgeBaseRepository;
 import vn.lnt.saas_customer_communication_platform.feature.knowledgebase.service.DocumentService;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -50,6 +54,7 @@ public class DocumentServiceImpl implements DocumentService {
     private final CompanyMemberRepository companyMemberRepository;
     private final DocumentParserManager documentParserManager;
     private final TextChunker textChunker;
+    private final EmbeddingService embeddingService;
 
     public DocumentServiceImpl(DocumentRepository documentRepository,
                                DocumentChunkRepository documentChunkRepository,
@@ -59,7 +64,8 @@ public class DocumentServiceImpl implements DocumentService {
                                CompanyRepository companyRepository,
                                CompanyMemberRepository companyMemberRepository,
                                DocumentParserManager documentParserManager,
-                               TextChunker textChunker) {
+                               TextChunker textChunker,
+                               EmbeddingService embeddingService) {
         this.documentRepository = documentRepository;
         this.documentChunkRepository = documentChunkRepository;
         this.knowledgeBaseRepository = knowledgeBaseRepository;
@@ -69,6 +75,7 @@ public class DocumentServiceImpl implements DocumentService {
         this.companyMemberRepository = companyMemberRepository;
         this.documentParserManager = documentParserManager;
         this.textChunker = textChunker;
+        this.embeddingService = embeddingService;
     }
 
     @Override
@@ -185,12 +192,19 @@ public class DocumentServiceImpl implements DocumentService {
 
             // Băm nhỏ thành các chunks
             List<String> rawChunks = textChunker.splitIntoChunks(extractedText);
+
+            // Sinh Vector Embedding cho từng chunk thông qua Google Gemini
+            List<List<Float>> embeddings = embeddingService.generateEmbeddings(rawChunks);
+
             for (int i = 0; i < rawChunks.size(); i++) {
                 DocumentChunk chunk = new DocumentChunk();
                 chunk.setDocument(document);
                 chunk.setCompany(document.getCompany());
                 chunk.setChunkIndex(i);
                 chunk.setContent(rawChunks.get(i));
+                if (embeddings != null && i < embeddings.size()) {
+                    chunk.setEmbedding(embeddingService.serializeEmbedding(embeddings.get(i)));
+                }
                 documentChunkRepository.save(chunk);
             }
 
@@ -202,6 +216,68 @@ public class DocumentServiceImpl implements DocumentService {
             documentRepository.save(document);
             throw new InvalidOperationException("Lỗi khi xử lý bóc tách tài liệu: " + ex.getMessage());
         }
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<DocumentChunkSearchResult> searchSimilarChunks(String currentUserEmail, Long companyId,
+                                                                Long knowledgeBaseId, String query, int topK, double minScore) {
+        User currentUser = getUserByEmail(currentUserEmail);
+        Long targetCompanyId = resolveTargetCompanyId(companyId);
+        validateActiveCompanyMember(currentUser.getId(), targetCompanyId);
+
+        return retrieveSimilarChunksByCompany(targetCompanyId, knowledgeBaseId, query, topK, minScore);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<DocumentChunkSearchResult> retrieveSimilarChunksByCompany(Long companyId, Long knowledgeBaseId,
+                                                                          String query, int topK, double minScore) {
+        if (companyId == null || query == null || query.isBlank()) {
+            return Collections.emptyList();
+        }
+
+        List<DocumentChunk> chunks = (knowledgeBaseId != null)
+                ? documentChunkRepository.findByCompanyIdAndKnowledgeBaseId(companyId, knowledgeBaseId)
+                : documentChunkRepository.findReadyChunksByCompanyId(companyId);
+
+        if (chunks.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        // Tạo embedding cho câu hỏi truy vấn
+        List<Float> queryVector = embeddingService.generateEmbedding(query);
+        if (queryVector == null || queryVector.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        List<DocumentChunkSearchResult> results = new ArrayList<>();
+        for (DocumentChunk chunk : chunks) {
+            if (chunk.getEmbedding() == null || chunk.getEmbedding().isBlank()) {
+                continue;
+            }
+            List<Float> chunkVector = embeddingService.parseEmbedding(chunk.getEmbedding());
+            if (chunkVector.isEmpty()) {
+                continue;
+            }
+            double score = embeddingService.calculateCosineSimilarity(queryVector, chunkVector);
+            if (score >= minScore) {
+                String docName = chunk.getDocument() != null ? chunk.getDocument().getFileName() : "";
+                Long docId = chunk.getDocument() != null ? chunk.getDocument().getId() : null;
+                results.add(new DocumentChunkSearchResult(
+                        chunk.getId(),
+                        docId,
+                        docName,
+                        chunk.getChunkIndex(),
+                        chunk.getContent(),
+                        score
+                ));
+            }
+        }
+
+        results.sort((a, b) -> Double.compare(b.getSimilarityScore(), a.getSimilarityScore()));
+        int limit = topK > 0 ? Math.min(topK, results.size()) : results.size();
+        return new ArrayList<>(results.subList(0, limit));
     }
 
     @Override

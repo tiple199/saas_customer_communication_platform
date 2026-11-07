@@ -17,7 +17,7 @@ public class DocumentChunk {
     @Column(name = "chunk_index")
     private Integer chunkIndex;
 
-    @Column(columnDefinition = "TEXT")
+    @Column(columnDefinition = "LONGTEXT")
     private String embedding;
 
     @ManyToOne(fetch = FetchType.LAZY)

@@ -1,5 +1,7 @@
 package vn.lnt.saas_customer_communication_platform.feature.conversation.service.impl;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -35,6 +37,9 @@ import vn.lnt.saas_customer_communication_platform.feature.conversation.reposito
 import vn.lnt.saas_customer_communication_platform.feature.conversation.repository.ConversationRepository;
 import vn.lnt.saas_customer_communication_platform.feature.conversation.repository.VisitorRepository;
 import vn.lnt.saas_customer_communication_platform.feature.conversation.service.ConversationService;
+import vn.lnt.saas_customer_communication_platform.feature.knowledgebase.dto.RagContextResponse;
+import vn.lnt.saas_customer_communication_platform.feature.knowledgebase.llm.LlmService;
+import vn.lnt.saas_customer_communication_platform.feature.knowledgebase.service.RagContextService;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -44,6 +49,8 @@ import java.util.stream.Collectors;
 @Service
 public class ConversationServiceImpl implements ConversationService {
 
+    private static final Logger log = LoggerFactory.getLogger(ConversationServiceImpl.class);
+
     private final ConversationRepository conversationRepository;
     private final ConversationMessageRepository conversationMessageRepository;
     private final ChannelRepository channelRepository;
@@ -51,6 +58,8 @@ public class ConversationServiceImpl implements ConversationService {
     private final UserRepository userRepository;
     private final CompanyMemberRepository companyMemberRepository;
     private final SimpMessagingTemplate messagingTemplate;
+    private final RagContextService ragContextService;
+    private final LlmService llmService;
 
     public ConversationServiceImpl(ConversationRepository conversationRepository,
                                    ConversationMessageRepository conversationMessageRepository,
@@ -58,7 +67,9 @@ public class ConversationServiceImpl implements ConversationService {
                                    VisitorRepository visitorRepository,
                                    UserRepository userRepository,
                                    CompanyMemberRepository companyMemberRepository,
-                                   SimpMessagingTemplate messagingTemplate) {
+                                   SimpMessagingTemplate messagingTemplate,
+                                   RagContextService ragContextService,
+                                   LlmService llmService) {
         this.conversationRepository = conversationRepository;
         this.conversationMessageRepository = conversationMessageRepository;
         this.channelRepository = channelRepository;
@@ -66,6 +77,8 @@ public class ConversationServiceImpl implements ConversationService {
         this.userRepository = userRepository;
         this.companyMemberRepository = companyMemberRepository;
         this.messagingTemplate = messagingTemplate;
+        this.ragContextService = ragContextService;
+        this.llmService = llmService;
     }
 
     @Override
@@ -159,7 +172,7 @@ public class ConversationServiceImpl implements ConversationService {
             conversation = conversationRepository.save(conversation);
         }
 
-        return saveConversationMessage(
+        ConversationMessageResponse visitorMsgResponse = saveConversationMessage(
                 channel.getCompany(),
                 conversation,
                 "VISITOR",
@@ -167,6 +180,44 @@ public class ConversationServiceImpl implements ConversationService {
                 content,
                 messageType
         );
+
+        // Kích hoạt AI RAG Auto-Reply nếu Channel bật AI và cuộc hội thoại đang ở chế độ HandlingMode.AI (SCRUM-75, 76, 77)
+        if (Boolean.TRUE.equals(channel.getAiEnabled()) && conversation.getHandlingMode() == HandlingMode.AI) {
+            triggerAiAutoReply(channel.getCompany(), conversation, content);
+        }
+
+        return visitorMsgResponse;
+    }
+
+    private void triggerAiAutoReply(Company company, Conversation conversation, String userQuery) {
+        try {
+            // 1. SCRUM-74: Xây dựng Context RAG từ câu hỏi của khách hàng
+            RagContextResponse context = ragContextService.buildContextForCompany(
+                    company.getId(),
+                    null, // Tự động tìm kiếm trên toàn bộ tài liệu READY của công ty
+                    conversation.getId(),
+                    userQuery,
+                    5,
+                    0.35
+            );
+
+            // 2. SCRUM-75 & SCRUM-76: Gọi LLM (Gemini 1.5 Flash) để sinh câu trả lời
+            String aiAnswer = llmService.generateAnswer(context);
+
+            // 3. SCRUM-77: Lưu câu trả lời của AI vào ConversationMessage (senderType = "AI") và phát realtime WebSocket
+            if (aiAnswer != null && !aiAnswer.isBlank()) {
+                saveConversationMessage(
+                        company,
+                        conversation,
+                        "AI",
+                        null,
+                        aiAnswer,
+                        "TEXT"
+                );
+            }
+        } catch (Exception ex) {
+            log.error("[RAG AutoReply] Lỗi khi AI tự động phản hồi cuộc hội thoại {}: {}", conversation.getId(), ex.getMessage());
+        }
     }
 
     @Override

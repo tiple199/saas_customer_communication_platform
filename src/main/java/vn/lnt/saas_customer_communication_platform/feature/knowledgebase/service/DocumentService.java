@@ -4,6 +4,7 @@ import org.springframework.core.io.Resource;
 import org.springframework.data.domain.Pageable;
 import org.springframework.web.multipart.MultipartFile;
 import vn.lnt.saas_customer_communication_platform.dto.PageResponse;
+import vn.lnt.saas_customer_communication_platform.feature.knowledgebase.dto.DocumentChunkSearchResult;
 import vn.lnt.saas_customer_communication_platform.feature.knowledgebase.dto.DocumentPreviewResponse;
 import vn.lnt.saas_customer_communication_platform.feature.knowledgebase.dto.DocumentResponse;
 
@@ -19,6 +20,12 @@ public interface DocumentService {
     DocumentResponse getDocumentById(String currentUserEmail, Long companyId, Long id);
 
     DocumentResponse processDocument(String currentUserEmail, Long companyId, Long id);
+
+    List<DocumentChunkSearchResult> searchSimilarChunks(String currentUserEmail, Long companyId,
+                                                        Long knowledgeBaseId, String query, int topK, double minScore);
+
+    List<DocumentChunkSearchResult> retrieveSimilarChunksByCompany(Long companyId, Long knowledgeBaseId,
+                                                                   String query, int topK, double minScore);
 
     DocumentPreviewResponse getDocumentPreview(String currentUserEmail, Long companyId, Long id);
 
