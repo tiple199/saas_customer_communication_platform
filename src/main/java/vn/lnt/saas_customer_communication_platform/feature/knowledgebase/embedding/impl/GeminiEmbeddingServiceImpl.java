@@ -6,6 +6,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 import vn.lnt.saas_customer_communication_platform.exception.InvalidOperationException;
@@ -33,6 +34,7 @@ public class GeminiEmbeddingServiceImpl implements EmbeddingService {
         this.embeddingModel = embeddingModel != null && !embeddingModel.isBlank() ? embeddingModel.trim() : "gemini-embedding-001";
         this.objectMapper = new ObjectMapper();
         this.restClient = RestClient.builder()
+                .requestFactory(new SimpleClientHttpRequestFactory())
                 .baseUrl(GEMINI_API_BASE)
                 .build();
 

@@ -32,7 +32,9 @@ public class Plan {
     @Column(name = "storage_limit")
     private Long storageLimit;
 
-    private String status;
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private PlanStatus status = PlanStatus.ACTIVE;
 
     public Plan() {
     }
@@ -101,11 +103,11 @@ public class Plan {
         this.storageLimit = storageLimit;
     }
 
-    public String getStatus() {
+    public PlanStatus getStatus() {
         return status;
     }
 
-    public void setStatus(String status) {
+    public void setStatus(PlanStatus status) {
         this.status = status;
     }
 }
