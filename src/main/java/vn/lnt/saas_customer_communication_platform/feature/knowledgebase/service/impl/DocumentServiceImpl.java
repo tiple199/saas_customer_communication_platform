@@ -1,5 +1,7 @@
 package vn.lnt.saas_customer_communication_platform.feature.knowledgebase.service.impl;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.core.io.Resource;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -44,6 +46,8 @@ import java.util.stream.Collectors;
 
 @Service
 public class DocumentServiceImpl implements DocumentService {
+
+    private static final Logger log = LoggerFactory.getLogger(DocumentServiceImpl.class);
 
     private final DocumentRepository documentRepository;
     private final DocumentChunkRepository documentChunkRepository;
@@ -230,7 +234,7 @@ public class DocumentServiceImpl implements DocumentService {
     }
 
     @Override
-    @Transactional(readOnly = true)
+    @Transactional
     public List<DocumentChunkSearchResult> retrieveSimilarChunksByCompany(Long companyId, Long knowledgeBaseId,
                                                                           String query, int topK, double minScore) {
         if (companyId == null || query == null || query.isBlank()) {
@@ -246,9 +250,45 @@ public class DocumentServiceImpl implements DocumentService {
         }
 
         // Tạo embedding cho câu hỏi truy vấn
-        List<Float> queryVector = embeddingService.generateEmbedding(query);
+        List<Float> queryVector;
+        try {
+            queryVector = embeddingService.generateEmbedding(query);
+        } catch (Exception ex) {
+            log.warn("[Semantic Search] Không thể tạo embedding cho truy vấn \"{}\": {}", query, ex.getMessage());
+            return Collections.emptyList();
+        }
         if (queryVector == null || queryVector.isEmpty()) {
             return Collections.emptyList();
+        }
+
+        // Tự động cập nhật lại vector cho các chunk cũ nếu chưa có embedding hoặc lệch số chiều vector
+        List<DocumentChunk> chunksNeedingEmbedding = new ArrayList<>();
+        for (DocumentChunk chunk : chunks) {
+            if (chunk.getEmbedding() == null || chunk.getEmbedding().isBlank()) {
+                chunksNeedingEmbedding.add(chunk);
+            } else {
+                List<Float> existingVec = embeddingService.parseEmbedding(chunk.getEmbedding());
+                if (existingVec.size() != queryVector.size()) {
+                    chunksNeedingEmbedding.add(chunk);
+                }
+            }
+        }
+        if (!chunksNeedingEmbedding.isEmpty()) {
+            try {
+                log.info("[Semantic Search] Tự động đồng bộ lại vector embedding ({} chiều) cho {} phân đoạn tài liệu của công ty #{}",
+                        queryVector.size(), chunksNeedingEmbedding.size(), companyId);
+                List<String> textsToEmbed = chunksNeedingEmbedding.stream()
+                        .map(DocumentChunk::getContent)
+                        .collect(Collectors.toList());
+                List<List<Float>> newVectors = embeddingService.generateEmbeddings(textsToEmbed);
+                for (int i = 0; i < chunksNeedingEmbedding.size() && i < newVectors.size(); i++) {
+                    DocumentChunk chunk = chunksNeedingEmbedding.get(i);
+                    chunk.setEmbedding(embeddingService.serializeEmbedding(newVectors.get(i)));
+                    documentChunkRepository.save(chunk);
+                }
+            } catch (Exception ex) {
+                log.warn("[Semantic Search] Không thể đồng bộ lại embedding cho các chunk cũ: {}", ex.getMessage());
+            }
         }
 
         List<DocumentChunkSearchResult> results = new ArrayList<>();

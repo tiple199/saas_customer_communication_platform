@@ -28,9 +28,9 @@ public class GeminiEmbeddingServiceImpl implements EmbeddingService {
 
     public GeminiEmbeddingServiceImpl(
             @Value("${gemini.api-key:}") String apiKey,
-            @Value("${gemini.embedding-model:text-embedding-004}") String embeddingModel) {
+            @Value("${gemini.embedding-model:gemini-embedding-001}") String embeddingModel) {
         this.apiKey = apiKey != null ? apiKey.trim() : "";
-        this.embeddingModel = embeddingModel != null && !embeddingModel.isBlank() ? embeddingModel.trim() : "text-embedding-004";
+        this.embeddingModel = embeddingModel != null && !embeddingModel.isBlank() ? embeddingModel.trim() : "gemini-embedding-001";
         this.objectMapper = new ObjectMapper();
         this.restClient = RestClient.builder()
                 .baseUrl(GEMINI_API_BASE)

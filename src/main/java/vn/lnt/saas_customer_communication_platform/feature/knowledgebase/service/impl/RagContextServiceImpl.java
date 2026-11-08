@@ -28,6 +28,8 @@ public class RagContextServiceImpl implements RagContextService {
 
     private static final int MAX_KNOWLEDGE_CHARS = 6000;
     private static final int MAX_HISTORY_MESSAGES = 8;
+    private static final double CONFIDENT_SIMILARITY_THRESHOLD = 0.45;
+    public static final String INSUFFICIENT_CONTEXT_TAG = "[INSUFFICIENT_CONTEXT]";
 
     private final DocumentService documentService;
     private final CompanyRepository companyRepository;
@@ -100,10 +102,26 @@ public class RagContextServiceImpl implements RagContextService {
         String knowledgeContext = formatKnowledgeContext(matchedChunks);
         boolean hasRelevantKnowledge = !matchedChunks.isEmpty() && !knowledgeContext.isBlank();
 
-        // 3. Xây dựng khối Lịch sử hội thoại gần đây (nếu có truyền conversationId)
-        String conversationHistoryContext = formatConversationHistory(companyId, conversationId);
+        double maxSimilarityScore = matchedChunks.stream()
+                .map(DocumentChunkSearchResult::getSimilarityScore)
+                .filter(score -> score != null)
+                .mapToDouble(Double::doubleValue)
+                .max()
+                .orElse(0.0);
 
-        // 4. Xây dựng System Instruction chuẩn cho AI của công ty
+        String trimmedQuery = query.trim();
+
+        // Xác định Pre-LLM dựa trên toán học Vector Similarity:
+        // Nếu không tìm thấy chunk nào hoặc điểm tương đồng cao nhất < ngưỡng tin cậy (0.45)
+        boolean insufficientContext = !hasRelevantKnowledge || maxSimilarityScore < CONFIDENT_SIMILARITY_THRESHOLD;
+        String insufficientReason = !hasRelevantKnowledge
+                ? "NO_MATCHED_CHUNKS"
+                : (maxSimilarityScore < CONFIDENT_SIMILARITY_THRESHOLD ? "LOW_SIMILARITY_SCORE" : null);
+
+        // 3. Xây dựng khối Lịch sử hội thoại gần đây (nếu có truyền conversationId)
+        String conversationHistoryContext = formatConversationHistory(companyId, conversationId, trimmedQuery);
+
+        // 4. Xây dựng System Instruction chuẩn cho AI của công ty (Structured JSON Output)
         String systemInstruction = buildSystemInstruction(company.getName());
 
         // 5. Ghép nối thành Full Augmented Prompt hoàn chỉnh để gửi cho LLM
@@ -111,7 +129,7 @@ public class RagContextServiceImpl implements RagContextService {
                 systemInstruction,
                 knowledgeContext,
                 conversationHistoryContext,
-                query.trim(),
+                trimmedQuery,
                 hasRelevantKnowledge
         );
 
@@ -119,8 +137,12 @@ public class RagContextServiceImpl implements RagContextService {
         response.setCompanyId(companyId);
         response.setKnowledgeBaseId(knowledgeBaseId);
         response.setConversationId(conversationId);
-        response.setQuery(query.trim());
+        response.setQuery(trimmedQuery);
         response.setHasRelevantKnowledge(hasRelevantKnowledge);
+        response.setMaxSimilarityScore(maxSimilarityScore);
+        response.setInsufficientContext(insufficientContext);
+        response.setHumanHandoffRequested(false);
+        response.setInsufficientReason(insufficientReason);
         response.setMatchedChunks(matchedChunks);
         response.setKnowledgeContext(knowledgeContext);
         response.setConversationHistoryContext(conversationHistoryContext);
@@ -128,6 +150,21 @@ public class RagContextServiceImpl implements RagContextService {
         response.setFullPrompt(fullPrompt);
 
         return response;
+    }
+
+    @Override
+    public boolean isInsufficientContext(RagContextResponse context, String aiAnswer) {
+        if (context == null) {
+            return true;
+        }
+        if (aiAnswer == null || aiAnswer.isBlank()) {
+            context.setInsufficientContext(true);
+            context.setInsufficientReason("EMPTY_LLM_ANSWER");
+            return true;
+        }
+        // Kết quả được quyết định bởi Structured JSON Output của LLM (hiểu ngữ nghĩa câu hỏi & tài liệu)
+        // kết hợp với đánh giá Vector Similarity trong context
+        return context.isInsufficientContext() || context.isHumanHandoffRequested();
     }
 
     private String formatKnowledgeContext(List<DocumentChunkSearchResult> chunks) {
@@ -172,7 +209,7 @@ public class RagContextServiceImpl implements RagContextService {
         return sb.toString().trim();
     }
 
-    private String formatConversationHistory(Long companyId, Long conversationId) {
+    private String formatConversationHistory(Long companyId, Long conversationId, String currentQuery) {
         if (conversationId == null) {
             return "";
         }
@@ -187,8 +224,22 @@ public class RagContextServiceImpl implements RagContextService {
             return "";
         }
 
-        int startIdx = Math.max(0, messages.size() - MAX_HISTORY_MESSAGES);
-        List<ConversationMessage> recentMessages = messages.subList(startIdx, messages.size());
+        // Loại bỏ tin nhắn vừa mới gửi ở cuối lịch sử để tránh lặp lại với phần [CÂU HỎI HIỆN TẠI]
+        int endIdx = messages.size();
+        if (endIdx > 0 && currentQuery != null && !currentQuery.isBlank()) {
+            ConversationMessage lastMsg = messages.get(endIdx - 1);
+            if ("VISITOR".equalsIgnoreCase(lastMsg.getSenderType())
+                    && lastMsg.getContent() != null
+                    && lastMsg.getContent().trim().equalsIgnoreCase(currentQuery.trim())) {
+                endIdx--;
+            }
+        }
+        if (endIdx <= 0) {
+            return "";
+        }
+
+        int startIdx = Math.max(0, endIdx - MAX_HISTORY_MESSAGES);
+        List<ConversationMessage> recentMessages = messages.subList(startIdx, endIdx);
 
         StringBuilder sb = new StringBuilder();
         for (ConversationMessage msg : recentMessages) {
@@ -220,10 +271,19 @@ public class RagContextServiceImpl implements RagContextService {
                 """
                 Bạn là Trợ lý AI chăm sóc khách hàng chính thức của %s.
                 Nguyên tắc phản hồi bắt buộc:
-                1. Chỉ sử dụng thông tin có trong phần [DỮ LIỆU CƠ SỞ TRI THỨC] bên dưới để trả lời câu hỏi của khách hàng.
-                2. Trả lời bằng tiếng Việt lịch sự, thân thiện, rõ ràng, ngắn gọn và đi thẳng vào trọng tâm.
-                3. Nếu thông tin không có trong [DỮ LIỆU CƠ SỞ TRI THỨC], hãy lịch sự thông báo rằng bạn chưa có thông tin chi tiết về vấn đề này và đề xuất chuyển cuộc trò chuyện cho nhân viên tư vấn hỗ trợ. Tuyệt đối KHÔNG tự ý bịa đặt thông tin, giá cả hoặc chính sách ngoài tài liệu.
+                1. Nếu khách hàng chào hỏi xã giao, cảm ơn hoặc trò chuyện lịch sự thông thường: hãy phản hồi thân thiện, tự nhiên với tư cách Trợ lý AI của %s và đặt "insufficientContext": false, "humanHandoffRequested": false, "reason": "SUFFICIENT".
+                2. Nếu khách hàng bày tỏ ý muốn gặp nhân viên thật, tư vấn viên, quản lý, hoặc không muốn nói chuyện với AI (dù diễn đạt bằng bất kỳ cách nào): hãy lịch sự thông báo sẽ chuyển cuộc trò chuyện cho nhân viên hỗ trợ ngay và đặt "insufficientContext": true, "humanHandoffRequested": true, "reason": "HUMAN_HANDOFF_REQUESTED".
+                3. Đối với mọi câu hỏi về sản phẩm, dịch vụ, bảng giá, quy định hoặc chính sách: CHỈ sử dụng thông tin có trong [DỮ LIỆU CƠ SỞ TRI THỨC] để trả lời. Nếu có đủ thông tin trả lời, đặt "insufficientContext": false, "humanHandoffRequested": false, "reason": "SUFFICIENT".
+                4. Nếu [DỮ LIỆU CƠ SỞ TRI THỨC] KHÔNG có thông tin hoặc không đủ dữ kiện để trả lời chính xác câu hỏi của khách hàng: TUYỆT ĐỐI KHÔNG tự bịa đặt thông tin, hãy lịch sự xin lỗi vì chưa có thông tin chi tiết, đề xuất chuyển cho nhân viên tư vấn và đặt "insufficientContext": true, "humanHandoffRequested": false, "reason": "NO_INFORMATION_IN_DOCS".
+                5. BẮT BUỘC trả về kết quả dưới dạng một đối tượng JSON hợp lệ theo đúng cấu trúc sau:
+                {
+                  "answer": "Nội dung câu trả lời tiếng Việt lịch sự gửi trực tiếp cho khách hàng",
+                  "insufficientContext": true hoặc false,
+                  "humanHandoffRequested": true hoặc false,
+                  "reason": "SUFFICIENT | NO_INFORMATION_IN_DOCS | HUMAN_HANDOFF_REQUESTED"
+                }
                 """,
+                safeCompanyName,
                 safeCompanyName
         ).trim();
     }
@@ -255,7 +315,7 @@ public class RagContextServiceImpl implements RagContextService {
         prompt.append("=== CÂU HỎI HIỆN TẠI CỦA KHÁCH HÀNG ===\n")
               .append(userQuery)
               .append("\n\n")
-              .append("Hãy đưa ra câu trả lời phù hợp nhất dành cho khách hàng:");
+              .append("Hãy phân tích ngữ nghĩa câu hỏi và trả về đúng JSON theo cấu trúc đã quy định:");
 
         return prompt.toString();
     }

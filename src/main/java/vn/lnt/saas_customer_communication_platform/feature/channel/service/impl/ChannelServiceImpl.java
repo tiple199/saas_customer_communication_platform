@@ -27,6 +27,10 @@ import vn.lnt.saas_customer_communication_platform.feature.company.repository.Co
 import vn.lnt.saas_customer_communication_platform.feature.company.repository.CompanyRepository;
 import vn.lnt.saas_customer_communication_platform.feature.channel.strategy.ChannelStrategy;
 import vn.lnt.saas_customer_communication_platform.feature.channel.strategy.ChannelStrategyFactory;
+import vn.lnt.saas_customer_communication_platform.feature.conversation.entity.Conversation;
+import vn.lnt.saas_customer_communication_platform.feature.conversation.entity.ConversationStatus;
+import vn.lnt.saas_customer_communication_platform.feature.conversation.entity.HandlingMode;
+import vn.lnt.saas_customer_communication_platform.feature.conversation.repository.ConversationRepository;
 
 import java.util.List;
 import java.util.stream.Collectors;
@@ -39,17 +43,20 @@ public class ChannelServiceImpl implements ChannelService {
     private final CompanyRepository companyRepository;
     private final CompanyMemberRepository companyMemberRepository;
     private final ChannelStrategyFactory channelStrategyFactory;
+    private final ConversationRepository conversationRepository;
 
     public ChannelServiceImpl(ChannelRepository channelRepository,
                               UserRepository userRepository,
                               CompanyRepository companyRepository,
                               CompanyMemberRepository companyMemberRepository,
-                              ChannelStrategyFactory channelStrategyFactory) {
+                              ChannelStrategyFactory channelStrategyFactory,
+                              ConversationRepository conversationRepository) {
         this.channelRepository = channelRepository;
         this.userRepository = userRepository;
         this.companyRepository = companyRepository;
         this.companyMemberRepository = companyMemberRepository;
         this.channelStrategyFactory = channelStrategyFactory;
+        this.conversationRepository = conversationRepository;
     }
 
     @Override
@@ -192,6 +199,9 @@ public class ChannelServiceImpl implements ChannelService {
         strategy.updateChannel(channel, request);
 
         Channel updatedChannel = channelRepository.save(channel);
+        if (request.getAiEnabled() != null) {
+            syncChannelConversationsAiMode(updatedChannel.getId(), Boolean.TRUE.equals(updatedChannel.getAiEnabled()));
+        }
         return ChannelResponse.fromEntity(updatedChannel);
     }
 
@@ -208,7 +218,27 @@ public class ChannelServiceImpl implements ChannelService {
 
         channel.setAiEnabled(enabled);
         Channel savedChannel = channelRepository.save(channel);
+        syncChannelConversationsAiMode(savedChannel.getId(), enabled);
         return ChannelResponse.fromEntity(savedChannel);
+    }
+
+    private void syncChannelConversationsAiMode(Long channelId, boolean aiEnabled) {
+        List<Conversation> conversations = conversationRepository.findByChannelId(channelId);
+        for (Conversation conv : conversations) {
+            if (conv.getStatus() == ConversationStatus.CLOSED) {
+                continue;
+            }
+            if (aiEnabled
+                    && conv.getAssigneeId() == null
+                    && conv.getStatus() != ConversationStatus.PENDING
+                    && conv.getHandlingMode() != HandlingMode.AI) {
+                conv.setHandlingMode(HandlingMode.AI);
+                conversationRepository.save(conv);
+            } else if (!aiEnabled && conv.getHandlingMode() == HandlingMode.AI) {
+                conv.setHandlingMode(HandlingMode.HUMAN);
+                conversationRepository.save(conv);
+            }
+        }
     }
 
     @Override

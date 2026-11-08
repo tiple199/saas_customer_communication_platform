@@ -11,6 +11,7 @@ import vn.lnt.saas_customer_communication_platform.feature.conversation.dto.Rest
 import vn.lnt.saas_customer_communication_platform.feature.conversation.dto.SendConversationMessageRequest;
 import vn.lnt.saas_customer_communication_platform.feature.conversation.entity.Conversation;
 import vn.lnt.saas_customer_communication_platform.feature.conversation.entity.ConversationStatus;
+import vn.lnt.saas_customer_communication_platform.feature.conversation.entity.HandlingMode;
 import vn.lnt.saas_customer_communication_platform.feature.conversation.entity.Visitor;
 
 import java.util.List;
@@ -67,6 +68,12 @@ public interface ConversationService {
      */
     ConversationResponse updateConversationStatus(String currentUserEmail, Long companyId,
                                                   Long conversationId, ConversationStatus status);
+
+    /**
+     * Chuyển đổi chế độ xử lý cuộc hội thoại giữa AI và HUMAN (Human Handoff / Return to AI).
+     */
+    ConversationResponse updateHandlingMode(String currentUserEmail, Long companyId,
+                                            Long conversationId, HandlingMode handlingMode);
 
     /**
      * Tạo hoặc lấy Conversation đang hoạt động cho Visitor & Channel thuộc công ty (dành cho thành viên công ty).

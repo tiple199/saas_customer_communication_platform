@@ -180,11 +180,15 @@ public class DocumentController {
 
         // 2. Gọi LLM (Gemini 1.5 Flash) để sinh câu trả lời
         String answer = llmService.generateAnswer(context);
+        boolean insufficientContext = ragContextService.isInsufficientContext(context, answer);
 
         RagAskResponse response = new RagAskResponse(
                 request.getQuery(),
                 answer,
                 context.isHasRelevantKnowledge(),
+                insufficientContext,
+                context.getMaxSimilarityScore(),
+                context.getInsufficientReason(),
                 context.getCompanyId(),
                 context.getKnowledgeBaseId(),
                 context.getConversationId(),

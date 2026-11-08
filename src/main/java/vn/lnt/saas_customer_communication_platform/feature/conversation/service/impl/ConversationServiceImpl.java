@@ -22,12 +22,14 @@ import vn.lnt.saas_customer_communication_platform.feature.company.entity.Compan
 import vn.lnt.saas_customer_communication_platform.feature.company.entity.CompanyMember;
 import vn.lnt.saas_customer_communication_platform.feature.company.entity.CompanyMemberStatus;
 import vn.lnt.saas_customer_communication_platform.feature.company.repository.CompanyMemberRepository;
+import vn.lnt.saas_customer_communication_platform.feature.company.repository.CompanyRepository;
 import vn.lnt.saas_customer_communication_platform.feature.conversation.dto.ConversationMessageResponse;
 import vn.lnt.saas_customer_communication_platform.feature.conversation.dto.ConversationResolutionResult;
 import vn.lnt.saas_customer_communication_platform.feature.conversation.dto.ConversationResponse;
 import vn.lnt.saas_customer_communication_platform.feature.conversation.dto.CreateConversationRequest;
 import vn.lnt.saas_customer_communication_platform.feature.conversation.dto.RestoreConversationResponse;
 import vn.lnt.saas_customer_communication_platform.feature.conversation.dto.SendConversationMessageRequest;
+import vn.lnt.saas_customer_communication_platform.feature.conversation.dto.StaffHandoffNotificationResponse;
 import vn.lnt.saas_customer_communication_platform.feature.conversation.entity.Conversation;
 import vn.lnt.saas_customer_communication_platform.feature.conversation.entity.ConversationMessage;
 import vn.lnt.saas_customer_communication_platform.feature.conversation.entity.ConversationStatus;
@@ -44,6 +46,7 @@ import vn.lnt.saas_customer_communication_platform.feature.knowledgebase.service
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 @Service
@@ -57,6 +60,7 @@ public class ConversationServiceImpl implements ConversationService {
     private final VisitorRepository visitorRepository;
     private final UserRepository userRepository;
     private final CompanyMemberRepository companyMemberRepository;
+    private final CompanyRepository companyRepository;
     private final SimpMessagingTemplate messagingTemplate;
     private final RagContextService ragContextService;
     private final LlmService llmService;
@@ -67,6 +71,7 @@ public class ConversationServiceImpl implements ConversationService {
                                    VisitorRepository visitorRepository,
                                    UserRepository userRepository,
                                    CompanyMemberRepository companyMemberRepository,
+                                   CompanyRepository companyRepository,
                                    SimpMessagingTemplate messagingTemplate,
                                    RagContextService ragContextService,
                                    LlmService llmService) {
@@ -76,6 +81,7 @@ public class ConversationServiceImpl implements ConversationService {
         this.visitorRepository = visitorRepository;
         this.userRepository = userRepository;
         this.companyMemberRepository = companyMemberRepository;
+        this.companyRepository = companyRepository;
         this.messagingTemplate = messagingTemplate;
         this.ragContextService = ragContextService;
         this.llmService = llmService;
@@ -112,7 +118,8 @@ public class ConversationServiceImpl implements ConversationService {
                 );
 
         if (activeOpt.isPresent()) {
-            return new ConversationResolutionResult(activeOpt.get(), false);
+            Conversation activeConv = syncConversationHandlingModeWithChannel(activeOpt.get(), channel);
+            return new ConversationResolutionResult(activeConv, false);
         }
 
         Conversation created = createConversation(channel, visitor);
@@ -141,7 +148,13 @@ public class ConversationServiceImpl implements ConversationService {
         if (conversation.getStatus() == ConversationStatus.RESOLVED) {
             conversation.setStatus(ConversationStatus.OPEN);
             conversation.setResolvedAt(null);
+            if (Boolean.TRUE.equals(channel.getAiEnabled())) {
+                conversation.setAssigneeId(null);
+                conversation.setHandlingMode(HandlingMode.AI);
+            }
             conversation = conversationRepository.save(conversation);
+        } else {
+            conversation = syncConversationHandlingModeWithChannel(conversation, channel);
         }
 
         List<ConversationMessageResponse> messages = getConversationMessages(conversation.getId());
@@ -164,10 +177,19 @@ public class ConversationServiceImpl implements ConversationService {
             conversation = createConversation(channel, visitor);
         } else {
             conversation = latestOpt.get();
-            if (conversation.getStatus() != ConversationStatus.OPEN) {
+            if (conversation.getStatus() == ConversationStatus.RESOLVED) {
+                conversation.setStatus(ConversationStatus.OPEN);
+                conversation.setResolvedAt(null);
+                if (Boolean.TRUE.equals(channel.getAiEnabled())) {
+                    conversation.setAssigneeId(null);
+                    conversation.setHandlingMode(HandlingMode.AI);
+                }
+            } else if (conversation.getStatus() != ConversationStatus.OPEN
+                    && conversation.getStatus() != ConversationStatus.PENDING) {
                 conversation.setStatus(ConversationStatus.OPEN);
                 conversation.setResolvedAt(null);
             }
+            applyChannelAiModeIfUnassigned(conversation, channel);
             conversation.setUpdatedAt(LocalDateTime.now());
             conversation = conversationRepository.save(conversation);
         }
@@ -181,31 +203,100 @@ public class ConversationServiceImpl implements ConversationService {
                 messageType
         );
 
-        // Kích hoạt AI RAG Auto-Reply nếu Channel bật AI và cuộc hội thoại đang ở chế độ HandlingMode.AI (SCRUM-75, 76, 77)
-        if (Boolean.TRUE.equals(channel.getAiEnabled()) && conversation.getHandlingMode() == HandlingMode.AI) {
-            triggerAiAutoReply(channel.getCompany(), conversation, content);
+        // AI tự động nhận message & phản hồi nếu Channel bật AI, hội thoại đang ở chế độ AI và chưa có Human takeover (assigneeId == null)
+        if (Boolean.TRUE.equals(channel.getAiEnabled())
+                && conversation.getHandlingMode() == HandlingMode.AI
+                && conversation.getAssigneeId() == null) {
+            Long targetCompanyId = (channel.getCompany() != null) ? channel.getCompany().getId() : null;
+            Long targetConversationId = conversation.getId();
+            String visitorQuery = content.trim();
+
+            log.info("[AI Auto-Receive] Đã nhận tin nhắn từ khách hàng (visitorId={}) tại hội thoại #{}: \"{}\". Đang kích hoạt AI trả lời ngầm...",
+                    visitor.getId(), targetConversationId, visitorQuery);
+            CompletableFuture.runAsync(() -> {
+                try {
+                    triggerAiAutoReplyAsync(targetCompanyId, targetConversationId, visitorQuery);
+                } catch (Exception ex) {
+                    log.error("[AI Auto-Receive] Lỗi không mong muốn trong luồng AI trả lời ngầm hội thoại #{}: {}",
+                            targetConversationId, ex.getMessage(), ex);
+                }
+            });
         }
 
         return visitorMsgResponse;
     }
 
-    private void triggerAiAutoReply(Company company, Conversation conversation, String userQuery) {
+    private Conversation syncConversationHandlingModeWithChannel(Conversation conversation, Channel channel) {
+        if (applyChannelAiModeIfUnassigned(conversation, channel)) {
+            Conversation saved = conversationRepository.save(conversation);
+            broadcastConversationUpdate(saved);
+            return saved;
+        }
+        return conversation;
+    }
+
+    private boolean applyChannelAiModeIfUnassigned(Conversation conversation, Channel channel) {
+        if (conversation == null || channel == null) {
+            return false;
+        }
+        boolean aiEnabled = Boolean.TRUE.equals(channel.getAiEnabled());
+        // Nếu đã có nhân viên phụ trách (Human takeover) hoặc Channel tắt AI -> bắt buộc ở chế độ HUMAN
+        // Không tự động ghi đè HUMAN -> AI trên hội thoại đang mở để giữ trạng thái Human Handoff / Takeover
+        if ((!aiEnabled || conversation.getAssigneeId() != null) && conversation.getHandlingMode() == HandlingMode.AI) {
+            conversation.setHandlingMode(HandlingMode.HUMAN);
+            return true;
+        }
+        return false;
+    }
+
+    private void triggerAiAutoReplyAsync(Long companyId, Long conversationId, String userQuery) {
+        if (companyId == null || conversationId == null) {
+            return;
+        }
+
+        Optional<Conversation> convOpt = conversationRepository.findByIdWithDetails(conversationId);
+        if (convOpt.isEmpty()) {
+            return;
+        }
+        Conversation conversation = convOpt.get();
+
+        // Kiểm tra xem hội thoại có còn ở chế độ AI và chưa có nhân viên phụ trách không
+        if (conversation.getHandlingMode() != HandlingMode.AI || conversation.getAssigneeId() != null) {
+            log.info("[AI Auto-Receive] Hội thoại #{} đã chuyển sang chế độ Human hoặc có người phụ trách, dừng AI auto-reply.", conversationId);
+            return;
+        }
+
+        Optional<Company> compOpt = companyRepository.findById(companyId);
+        if (compOpt.isEmpty()) {
+            return;
+        }
+        Company company = compOpt.get();
+
         try {
-            // 1. SCRUM-74: Xây dựng Context RAG từ câu hỏi của khách hàng
+            // 1. SCRUM-74: Xây dựng Context RAG từ câu hỏi của khách hàng + tài liệu Knowledge Base của công ty
             RagContextResponse context = ragContextService.buildContextForCompany(
-                    company.getId(),
+                    companyId,
                     null, // Tự động tìm kiếm trên toàn bộ tài liệu READY của công ty
-                    conversation.getId(),
+                    conversationId,
                     userQuery,
                     5,
                     0.35
             );
 
-            // 2. SCRUM-75 & SCRUM-76: Gọi LLM (Gemini 1.5 Flash) để sinh câu trả lời
+            int matchedCount = context.getMatchedChunks() != null ? context.getMatchedChunks().size() : 0;
+            log.info("[RAG Answer] Đã xây dựng RAG Context cho hội thoại #{} (khớp {} đoạn tài liệu, hasRelevantKnowledge={})",
+                    conversationId, matchedCount, context.isHasRelevantKnowledge());
+
+            // 2. SCRUM-75 & SCRUM-76: Gọi LLM để sinh câu trả lời từ RAG Context
             String aiAnswer = llmService.generateAnswer(context);
 
-            // 3. SCRUM-77: Lưu câu trả lời của AI vào ConversationMessage (senderType = "AI") và phát realtime WebSocket
+            // 3. Xác định xem AI có đủ Context để trả lời câu hỏi này không
+            boolean insufficientContext = ragContextService.isInsufficientContext(context, aiAnswer);
+
+            // 4. SCRUM-77: Lưu câu trả lời của AI vào ConversationMessage (senderType = "AI") và phát realtime WebSocket
             if (aiAnswer != null && !aiAnswer.isBlank()) {
+                conversation.setUpdatedAt(LocalDateTime.now());
+                conversationRepository.save(conversation);
                 saveConversationMessage(
                         company,
                         conversation,
@@ -214,9 +305,47 @@ public class ConversationServiceImpl implements ConversationService {
                         aiAnswer,
                         "TEXT"
                 );
+                log.info("[RAG Answer] AI đã gửi câu trả lời tự động cho hội thoại #{}", conversation.getId());
+            }
+
+            // 5. HUMAN HANDOFF: Nếu AI không đủ context hoặc khách yêu cầu gặp nhân viên -> Tự động chuyển sang HUMAN
+            if (insufficientContext) {
+                performAiToHumanHandoff(conversation, userQuery, context.getInsufficientReason());
             }
         } catch (Exception ex) {
-            log.error("[RAG AutoReply] Lỗi khi AI tự động phản hồi cuộc hội thoại {}: {}", conversation.getId(), ex.getMessage());
+            log.error("[RAG AutoReply] Lỗi khi AI tự động phản hồi cuộc hội thoại {}: {}", conversationId, ex.getMessage());
+            try {
+                saveConversationMessage(
+                        company,
+                        conversation,
+                        "AI",
+                        null,
+                        "Xin lỗi bạn, hiện tại trợ lý AI đang tạm thời gián đoạn kết nối. Tôi đã chuyển cuộc trò chuyện này sang cho nhân viên tư vấn hỗ trợ bạn ngay nhé!",
+                        "TEXT"
+                );
+            } catch (Exception ignored) {
+            }
+            performAiToHumanHandoff(conversation, userQuery, "AI_EXECUTION_ERROR");
+        }
+    }
+
+    private void performAiToHumanHandoff(Conversation conversation, String userQuery, String reason) {
+        if (conversation == null) {
+            return;
+        }
+        try {
+            conversation.setHandlingMode(HandlingMode.HUMAN);
+            if (conversation.getAssigneeId() == null) {
+                conversation.setStatus(ConversationStatus.PENDING);
+            }
+            conversation.setUpdatedAt(LocalDateTime.now());
+            Conversation saved = conversationRepository.save(conversation);
+            broadcastConversationUpdate(saved);
+            broadcastStaffHandoffNotification(saved, userQuery, reason);
+            log.info("[Human Handoff] Đã tự động chuyển hội thoại #{} từ AI sang HUMAN và gửi thông báo cho Staff (status={}, reason={})",
+                    saved.getId(), saved.getStatus(), reason);
+        } catch (Exception ex) {
+            log.error("[Human Handoff] Lỗi khi chuyển giao hội thoại #{}: {}", conversation.getId(), ex.getMessage());
         }
     }
 
@@ -305,7 +434,60 @@ public class ConversationServiceImpl implements ConversationService {
                         convResp
                 );
             }
+            if (convResp.getId() != null) {
+                messagingTemplate.convertAndSend(
+                        "/topic/conversations/" + convResp.getId() + "/status",
+                        convResp
+                );
+            }
         } catch (Exception ignored) {
+        }
+    }
+
+    private void broadcastStaffHandoffNotification(Conversation conversation, String userQuery, String reason) {
+        if (conversation == null) {
+            return;
+        }
+        try {
+            ConversationResponse convResp = ConversationResponse.fromEntity(conversation);
+            if (convResp.getCompanyId() == null) {
+                return;
+            }
+            String visitorDisplayName = (convResp.getVisitorName() != null && !convResp.getVisitorName().isBlank())
+                    ? convResp.getVisitorName()
+                    : "Visitor #" + convResp.getVisitorId();
+            String channelDisplayName = (convResp.getChannelName() != null && !convResp.getChannelName().isBlank())
+                    ? convResp.getChannelName()
+                    : "Channel #" + convResp.getChannelId();
+
+            String notificationMessage;
+            if ("CUSTOMER_REQUESTED_HUMAN_HANDOFF".equals(reason)) {
+                notificationMessage = visitorDisplayName + " (kênh " + channelDisplayName + ") yêu cầu gặp nhân viên hỗ trợ trực tiếp.";
+            } else {
+                notificationMessage = "AI không đủ thông tin trả lời " + visitorDisplayName + " (kênh " + channelDisplayName + "). Đã chuyển sang chế độ chờ nhân viên hỗ trợ.";
+            }
+
+            StaffHandoffNotificationResponse payload = new StaffHandoffNotificationResponse(
+                    "AI_HUMAN_HANDOFF",
+                    convResp.getCompanyId(),
+                    convResp.getId(),
+                    convResp.getChannelId(),
+                    convResp.getChannelName(),
+                    convResp.getVisitorId(),
+                    convResp.getVisitorName(),
+                    userQuery,
+                    reason,
+                    notificationMessage,
+                    LocalDateTime.now()
+            );
+
+            messagingTemplate.convertAndSend(
+                    "/topic/companies/" + convResp.getCompanyId() + "/notifications",
+                    payload
+            );
+        } catch (Exception ex) {
+            log.warn("[Human Handoff] Không thể gửi WebSocket thông báo Staff cho hội thoại #{}: {}",
+                    conversation.getId(), ex.getMessage());
         }
     }
 
@@ -391,6 +573,52 @@ public class ConversationServiceImpl implements ConversationService {
             conversation.setResolvedAt(null);
         }
 
+        Conversation saved = conversationRepository.save(conversation);
+        broadcastConversationUpdate(saved);
+        return ConversationResponse.fromEntity(saved);
+    }
+
+    @Override
+    @Transactional
+    public ConversationResponse updateHandlingMode(String currentUserEmail, Long companyId,
+                                                   Long conversationId, HandlingMode handlingMode) {
+        if (handlingMode == null) {
+            throw new InvalidOperationException("Chế độ xử lý (handlingMode) không được để trống");
+        }
+
+        User currentUser = getUserByEmail(currentUserEmail);
+        Long targetCompanyId = resolveTargetCompanyId(companyId);
+        validateActiveCompanyMember(currentUser.getId(), targetCompanyId);
+
+        Conversation conversation = conversationRepository.findByIdAndChannelCompanyId(conversationId, targetCompanyId)
+                .orElseThrow(() -> new ResourceNotFoundException("Conversation", "id", conversationId));
+
+        if (conversation.getStatus() == ConversationStatus.CLOSED) {
+            throw new InvalidOperationException("Cuộc hội thoại đã đóng hoàn toàn, không thể đổi chế độ xử lý");
+        }
+
+        if (handlingMode == HandlingMode.AI) {
+            Channel channel = conversation.getChannel();
+            if (channel == null || !Boolean.TRUE.equals(channel.getAiEnabled())) {
+                throw new InvalidOperationException("Kênh kết nối này chưa bật AI. Vui lòng bật AI trên kênh trước khi chuyển sang chế độ AI.");
+            }
+            conversation.setHandlingMode(HandlingMode.AI);
+            conversation.setAssigneeId(null);
+            if (conversation.getStatus() != ConversationStatus.OPEN) {
+                conversation.setStatus(ConversationStatus.OPEN);
+                conversation.setResolvedAt(null);
+            }
+        } else {
+            conversation.setHandlingMode(HandlingMode.HUMAN);
+            if (conversation.getAssigneeId() == null) {
+                conversation.setAssigneeId(currentUser.getId());
+            }
+            if (conversation.getStatus() == ConversationStatus.PENDING) {
+                conversation.setStatus(ConversationStatus.OPEN);
+            }
+        }
+
+        conversation.setUpdatedAt(LocalDateTime.now());
         Conversation saved = conversationRepository.save(conversation);
         broadcastConversationUpdate(saved);
         return ConversationResponse.fromEntity(saved);

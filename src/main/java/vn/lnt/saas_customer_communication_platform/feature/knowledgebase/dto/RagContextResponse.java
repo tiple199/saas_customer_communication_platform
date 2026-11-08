@@ -9,6 +9,10 @@ public class RagContextResponse {
     private Long conversationId;
     private String query;
     private boolean hasRelevantKnowledge;
+    private double maxSimilarityScore;
+    private boolean insufficientContext;
+    private boolean humanHandoffRequested;
+    private String insufficientReason;
     private List<DocumentChunkSearchResult> matchedChunks;
     private String knowledgeContext;
     private String conversationHistoryContext;
@@ -56,6 +60,38 @@ public class RagContextResponse {
 
     public void setHasRelevantKnowledge(boolean hasRelevantKnowledge) {
         this.hasRelevantKnowledge = hasRelevantKnowledge;
+    }
+
+    public double getMaxSimilarityScore() {
+        return maxSimilarityScore;
+    }
+
+    public void setMaxSimilarityScore(double maxSimilarityScore) {
+        this.maxSimilarityScore = maxSimilarityScore;
+    }
+
+    public boolean isInsufficientContext() {
+        return insufficientContext;
+    }
+
+    public void setInsufficientContext(boolean insufficientContext) {
+        this.insufficientContext = insufficientContext;
+    }
+
+    public boolean isHumanHandoffRequested() {
+        return humanHandoffRequested;
+    }
+
+    public void setHumanHandoffRequested(boolean humanHandoffRequested) {
+        this.humanHandoffRequested = humanHandoffRequested;
+    }
+
+    public String getInsufficientReason() {
+        return insufficientReason;
+    }
+
+    public void setInsufficientReason(String insufficientReason) {
+        this.insufficientReason = insufficientReason;
     }
 
     public List<DocumentChunkSearchResult> getMatchedChunks() {

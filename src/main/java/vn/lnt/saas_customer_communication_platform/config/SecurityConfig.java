@@ -116,6 +116,8 @@ public class SecurityConfig {
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/api/v1/public/widget/**", publicWidgetConfig);
+        source.registerCorsConfiguration("/ws/**", publicWidgetConfig);
+        source.registerCorsConfiguration("/ws", publicWidgetConfig);
         source.registerCorsConfiguration("/**", appConfig);
         return source;
     }

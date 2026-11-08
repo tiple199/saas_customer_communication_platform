@@ -18,6 +18,7 @@ import vn.lnt.saas_customer_communication_platform.feature.conversation.dto.Crea
 import vn.lnt.saas_customer_communication_platform.feature.conversation.dto.RestoreConversationResponse;
 import vn.lnt.saas_customer_communication_platform.feature.conversation.dto.SendConversationMessageRequest;
 import vn.lnt.saas_customer_communication_platform.feature.conversation.dto.UpdateConversationStatusRequest;
+import vn.lnt.saas_customer_communication_platform.feature.conversation.dto.UpdateHandlingModeRequest;
 import vn.lnt.saas_customer_communication_platform.feature.conversation.entity.ConversationStatus;
 import vn.lnt.saas_customer_communication_platform.feature.conversation.service.ConversationService;
 
@@ -131,6 +132,19 @@ public class ConversationController {
                 currentUserEmail, companyId, id, request.getStatus()
         );
         return ResponseEntity.ok(ApiResponse.success("Cập nhật trạng thái cuộc hội thoại thành công", response));
+    }
+
+    @PatchMapping("/{id}/handling-mode")
+    public ResponseEntity<ApiResponse<ConversationResponse>> updateHandlingMode(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestParam(required = false) Long companyId,
+            @PathVariable Long id,
+            @Valid @RequestBody UpdateHandlingModeRequest request) {
+        String currentUserEmail = jwt != null ? jwt.getSubject() : null;
+        ConversationResponse response = conversationService.updateHandlingMode(
+                currentUserEmail, companyId, id, request.getHandlingMode()
+        );
+        return ResponseEntity.ok(ApiResponse.success("Cập nhật chế độ xử lý cuộc hội thoại thành công", response));
     }
 }
 

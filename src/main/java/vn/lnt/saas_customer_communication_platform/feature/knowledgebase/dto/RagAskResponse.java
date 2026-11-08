@@ -7,6 +7,9 @@ public class RagAskResponse {
     private String query;
     private String answer;
     private boolean hasRelevantKnowledge;
+    private boolean insufficientContext;
+    private double maxSimilarityScore;
+    private String insufficientReason;
     private Long companyId;
     private Long knowledgeBaseId;
     private Long conversationId;
@@ -17,9 +20,20 @@ public class RagAskResponse {
 
     public RagAskResponse(String query, String answer, boolean hasRelevantKnowledge, Long companyId,
                           Long knowledgeBaseId, Long conversationId, List<DocumentChunkSearchResult> matchedChunks) {
+        this(query, answer, hasRelevantKnowledge, !hasRelevantKnowledge, 0.0, null,
+                companyId, knowledgeBaseId, conversationId, matchedChunks);
+    }
+
+    public RagAskResponse(String query, String answer, boolean hasRelevantKnowledge,
+                          boolean insufficientContext, double maxSimilarityScore, String insufficientReason,
+                          Long companyId, Long knowledgeBaseId, Long conversationId,
+                          List<DocumentChunkSearchResult> matchedChunks) {
         this.query = query;
         this.answer = answer;
         this.hasRelevantKnowledge = hasRelevantKnowledge;
+        this.insufficientContext = insufficientContext;
+        this.maxSimilarityScore = maxSimilarityScore;
+        this.insufficientReason = insufficientReason;
         this.companyId = companyId;
         this.knowledgeBaseId = knowledgeBaseId;
         this.conversationId = conversationId;
@@ -48,6 +62,30 @@ public class RagAskResponse {
 
     public void setHasRelevantKnowledge(boolean hasRelevantKnowledge) {
         this.hasRelevantKnowledge = hasRelevantKnowledge;
+    }
+
+    public boolean isInsufficientContext() {
+        return insufficientContext;
+    }
+
+    public void setInsufficientContext(boolean insufficientContext) {
+        this.insufficientContext = insufficientContext;
+    }
+
+    public double getMaxSimilarityScore() {
+        return maxSimilarityScore;
+    }
+
+    public void setMaxSimilarityScore(double maxSimilarityScore) {
+        this.maxSimilarityScore = maxSimilarityScore;
+    }
+
+    public String getInsufficientReason() {
+        return insufficientReason;
+    }
+
+    public void setInsufficientReason(String insufficientReason) {
+        this.insufficientReason = insufficientReason;
     }
 
     public Long getCompanyId() {
