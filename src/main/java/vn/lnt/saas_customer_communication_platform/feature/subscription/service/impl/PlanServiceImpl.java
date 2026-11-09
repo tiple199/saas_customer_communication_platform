@@ -13,12 +13,28 @@ import vn.lnt.saas_customer_communication_platform.exception.ResourceNotFoundExc
 import vn.lnt.saas_customer_communication_platform.feature.auth.entity.User;
 import vn.lnt.saas_customer_communication_platform.feature.auth.repository.UserRepository;
 import vn.lnt.saas_customer_communication_platform.feature.subscription.dto.CreatePlanRequest;
+import vn.lnt.saas_customer_communication_platform.feature.subscription.dto.CompanySubscriptionResponse;
+import vn.lnt.saas_customer_communication_platform.feature.subscription.dto.DowngradeSubscriptionRequest;
+import vn.lnt.saas_customer_communication_platform.feature.subscription.dto.DowngradeSubscriptionResponse;
 import vn.lnt.saas_customer_communication_platform.feature.subscription.dto.PlanResponse;
 import vn.lnt.saas_customer_communication_platform.feature.subscription.dto.UpdatePlanRequest;
+import vn.lnt.saas_customer_communication_platform.feature.subscription.dto.UpgradeCalculationResponse;
+import vn.lnt.saas_customer_communication_platform.feature.subscription.dto.UpgradeSubscriptionRequest;
+import vn.lnt.saas_customer_communication_platform.feature.subscription.dto.UpgradeSubscriptionResponse;
+import vn.lnt.saas_customer_communication_platform.feature.subscription.entity.Payment;
 import vn.lnt.saas_customer_communication_platform.feature.subscription.entity.Plan;
 import vn.lnt.saas_customer_communication_platform.feature.subscription.entity.PlanStatus;
+import vn.lnt.saas_customer_communication_platform.feature.subscription.entity.Subscription;
+import vn.lnt.saas_customer_communication_platform.feature.subscription.repository.PaymentRepository;
 import vn.lnt.saas_customer_communication_platform.feature.subscription.repository.PlanRepository;
 import vn.lnt.saas_customer_communication_platform.feature.subscription.repository.SubscriptionRepository;
+import vn.lnt.saas_customer_communication_platform.feature.channel.repository.ChannelRepository;
+import vn.lnt.saas_customer_communication_platform.feature.company.entity.Company;
+import vn.lnt.saas_customer_communication_platform.feature.company.entity.CompanyMemberStatus;
+import vn.lnt.saas_customer_communication_platform.feature.company.repository.CompanyMemberRepository;
+import vn.lnt.saas_customer_communication_platform.feature.company.repository.CompanyRepository;
+import vn.lnt.saas_customer_communication_platform.feature.company.security.CompanySecurityEvaluator;
+import vn.lnt.saas_customer_communication_platform.config.tenant.TenantContext;
 import vn.lnt.saas_customer_communication_platform.feature.subscription.service.PlanService;
 
 import java.util.List;
@@ -29,14 +45,29 @@ public class PlanServiceImpl implements PlanService {
 
     private final PlanRepository planRepository;
     private final SubscriptionRepository subscriptionRepository;
+    private final PaymentRepository paymentRepository;
     private final UserRepository userRepository;
+    private final CompanyRepository companyRepository;
+    private final CompanyMemberRepository companyMemberRepository;
+    private final ChannelRepository channelRepository;
+    private final CompanySecurityEvaluator companySecurityEvaluator;
 
     public PlanServiceImpl(PlanRepository planRepository,
                            SubscriptionRepository subscriptionRepository,
-                           UserRepository userRepository) {
+                           PaymentRepository paymentRepository,
+                           UserRepository userRepository,
+                           CompanyRepository companyRepository,
+                           CompanyMemberRepository companyMemberRepository,
+                           ChannelRepository channelRepository,
+                           CompanySecurityEvaluator companySecurityEvaluator) {
         this.planRepository = planRepository;
         this.subscriptionRepository = subscriptionRepository;
+        this.paymentRepository = paymentRepository;
         this.userRepository = userRepository;
+        this.companyRepository = companyRepository;
+        this.companyMemberRepository = companyMemberRepository;
+        this.channelRepository = channelRepository;
+        this.companySecurityEvaluator = companySecurityEvaluator;
     }
 
     public static boolean isSuperAdminRole(String role) {
@@ -230,6 +261,401 @@ public class PlanServiceImpl implements PlanService {
         }
 
         planRepository.delete(plan);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public CompanySubscriptionResponse getCompanyCurrentSubscription(String currentUserEmail, Long companyId) {
+        User currentUser = getUserByEmail(currentUserEmail);
+        Long targetCompanyId = companyId != null ? companyId : TenantContext.getTenantId();
+        if (targetCompanyId == null) {
+            throw new InvalidOperationException("Bạn chưa chọn công ty hoạt động");
+        }
+
+        if (!isSuperAdminRole(currentUser.getRole()) && !companySecurityEvaluator.isMember(currentUser.getId(), targetCompanyId)) {
+            throw new InvalidOperationException("Bạn không có quyền truy cập thông tin gói cước của công ty này");
+        }
+
+        Subscription sub = subscriptionRepository.findFirstByCompanyIdAndStatusOrderByEndAtDesc(targetCompanyId, "ACTIVE")
+                .or(() -> subscriptionRepository.findFirstByCompanyIdOrderByCreatedAtDesc(targetCompanyId))
+                .orElse(null);
+
+        java.time.LocalDateTime now = java.time.LocalDateTime.now();
+
+        // Nếu gói cước trả phí hiện tại đã quá ngày hết hạn (endAt), tự động hạ cấp về gói mặc định Starter (Miễn phí)
+        if (sub != null && sub.getPlan() != null && sub.getPlan().getPrice().compareTo(java.math.BigDecimal.ZERO) > 0) {
+            if (sub.getEndAt() != null && sub.getEndAt().isBefore(now)) {
+                Plan freePlan = planRepository.findByStatusOrderByPriceAsc(PlanStatus.ACTIVE).stream()
+                        .findFirst()
+                        .orElse(null);
+                if (freePlan != null) {
+                    sub.setPlan(freePlan);
+                    sub.setStatus("ACTIVE");
+                    sub.setStartAt(now);
+                    sub.setEndAt(now.plusYears(10)); // Gói free duy trì dài hạn
+                    sub.setPendingPlanId(null);
+                    sub = subscriptionRepository.save(sub);
+                }
+            }
+        }
+
+        if (sub == null) {
+            // Nếu công ty chưa có subscription nào trong DB, tạo và trả về gói mặc định Starter (miễn phí)
+            Plan defaultPlan = planRepository.findByStatusOrderByPriceAsc(PlanStatus.ACTIVE).stream()
+                    .findFirst()
+                    .orElse(null);
+
+            CompanySubscriptionResponse mockResp = new CompanySubscriptionResponse();
+            mockResp.setCompanyId(targetCompanyId);
+            mockResp.setStatus("ACTIVE");
+            mockResp.setPlan(PlanResponse.fromEntity(defaultPlan));
+            return mockResp;
+        }
+
+        return CompanySubscriptionResponse.fromEntity(sub, null);
+    }
+
+    private boolean isAnnualSubscription(Subscription currentSub, java.time.LocalDateTime now) {
+        if (currentSub == null || currentSub.getEndAt() == null || currentSub.getEndAt().isBefore(now)) {
+            return false;
+        }
+        if (currentSub.getPlan() == null || currentSub.getPlan().getPrice() == null
+                || currentSub.getPlan().getPrice().compareTo(java.math.BigDecimal.ZERO) <= 0) {
+            return false;
+        }
+        // Chu kỳ ban đầu > 60 ngày hoặc số ngày còn lại > 30 ngày
+        if (currentSub.getStartAt() != null && java.time.Duration.between(currentSub.getStartAt(), currentSub.getEndAt()).toDays() > 60) {
+            return true;
+        }
+        return java.time.Duration.between(now, currentSub.getEndAt()).toDays() > 30;
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public UpgradeCalculationResponse calculateUpgradeAmount(String currentUserEmail, Long companyId, Long targetPlanId, Integer durationMonths) {
+        User currentUser = getUserByEmail(currentUserEmail);
+        Long targetCompanyId = companyId != null ? companyId : TenantContext.getTenantId();
+        if (targetCompanyId == null) {
+            throw new InvalidOperationException("Bạn chưa chọn công ty hoạt động");
+        }
+
+        if (!isSuperAdminRole(currentUser.getRole()) && !companySecurityEvaluator.isOwnerOrAdmin(currentUser.getId(), targetCompanyId)) {
+            throw new InvalidOperationException("Bạn không có quyền xem thông tin nâng cấp của công ty này");
+        }
+
+        Plan targetPlan = planRepository.findById(targetPlanId)
+                .orElseThrow(() -> new ResourceNotFoundException("Plan", "id", targetPlanId));
+
+        Subscription currentSub = subscriptionRepository.findFirstByCompanyIdAndStatusOrderByEndAtDesc(targetCompanyId, "ACTIVE")
+                .or(() -> subscriptionRepository.findFirstByCompanyIdOrderByCreatedAtDesc(targetCompanyId))
+                .orElse(null);
+
+        java.time.LocalDateTime now = java.time.LocalDateTime.now();
+        boolean isAnnual = isAnnualSubscription(currentSub, now);
+
+        int months = (durationMonths != null && (durationMonths == 1 || durationMonths == 12)) ? durationMonths : (isAnnual ? 12 : 1);
+        if (isAnnual) {
+            months = 12; // Khóa chu kỳ 1 Năm nếu gói hiện tại là gói Năm
+        }
+
+        java.math.BigDecimal fullNewPlanAmount = targetPlan.getPrice().multiply(java.math.BigDecimal.valueOf(months));
+        java.math.BigDecimal unusedCredit = java.math.BigDecimal.ZERO;
+        long remainingDays = 0;
+
+        // Tính tiền thừa (Proration) nếu gói hiện tại có phí và còn ngày sử dụng
+        if (currentSub != null && currentSub.getPlan() != null
+                && currentSub.getPlan().getPrice().compareTo(java.math.BigDecimal.ZERO) > 0
+                && currentSub.getEndAt() != null && currentSub.getEndAt().isAfter(now)) {
+
+            java.time.Duration durationRemaining = java.time.Duration.between(now, currentSub.getEndAt());
+            remainingDays = Math.max(1, durationRemaining.toDays());
+
+            // Đơn giá mỗi ngày của gói cũ = Giá 1 tháng / 30 ngày
+            java.math.BigDecimal dailyRate = currentSub.getPlan().getPrice()
+                    .divide(java.math.BigDecimal.valueOf(30), 4, java.math.RoundingMode.HALF_UP);
+
+            unusedCredit = dailyRate.multiply(java.math.BigDecimal.valueOf(remainingDays))
+                    .setScale(0, java.math.RoundingMode.DOWN);
+
+            // Không để tiền thừa vượt quá giá trị gói mới
+            if (unusedCredit.compareTo(fullNewPlanAmount) > 0) {
+                unusedCredit = fullNewPlanAmount;
+            }
+        }
+
+        java.math.BigDecimal finalAmount = fullNewPlanAmount.subtract(unusedCredit);
+        if (finalAmount.compareTo(java.math.BigDecimal.ZERO) < 0) {
+            finalAmount = java.math.BigDecimal.ZERO;
+        }
+
+        UpgradeCalculationResponse resp = new UpgradeCalculationResponse();
+        resp.setTargetPlanId(targetPlan.getId());
+        resp.setTargetPlanName(targetPlan.getName());
+        resp.setTargetPlanPrice(targetPlan.getPrice());
+        resp.setDurationMonths(months);
+        resp.setFullNewPlanAmount(fullNewPlanAmount);
+        resp.setUnusedCreditAmount(unusedCredit);
+        resp.setRemainingDays(remainingDays);
+        resp.setFinalAmountToPay(finalAmount);
+        resp.setAnnualOnly(isAnnual);
+        if (isAnnual) {
+            resp.setAnnualOnlyReason("Gói hiện tại của bạn là gói theo Năm (còn " + remainingDays + " ngày). Khi nâng cấp lên gói cao hơn, chu kỳ thanh toán áp dụng theo Năm (12 Tháng) để bảo toàn giá trị khấu trừ tiền thừa.");
+        }
+        return resp;
+    }
+
+    @Override
+    @Transactional
+    public UpgradeSubscriptionResponse upgradeCompanySubscription(String currentUserEmail, Long companyId, UpgradeSubscriptionRequest request) {
+        User currentUser = getUserByEmail(currentUserEmail);
+        Long targetCompanyId = companyId != null ? companyId : TenantContext.getTenantId();
+        if (targetCompanyId == null) {
+            throw new InvalidOperationException("Bạn chưa chọn công ty hoạt động");
+        }
+
+        // Chỉ OWNER hoặc ADMIN của công ty (hoặc Super Admin) mới có quyền nâng cấp gói cước
+        if (!isSuperAdminRole(currentUser.getRole()) && !companySecurityEvaluator.isOwnerOrAdmin(currentUser.getId(), targetCompanyId)) {
+            throw new InvalidOperationException("Chỉ chủ sở hữu (Owner) hoặc quản trị viên (Admin) của công ty mới có quyền nâng cấp gói dịch vụ");
+        }
+
+        Company company = companyRepository.findById(targetCompanyId)
+                .orElseThrow(() -> new ResourceNotFoundException("Company", "id", targetCompanyId));
+
+        Plan targetPlan = planRepository.findById(request.getTargetPlanId())
+                .orElseThrow(() -> new ResourceNotFoundException("Plan", "id", request.getTargetPlanId()));
+
+        if (targetPlan.getStatus() != PlanStatus.ACTIVE) {
+            throw new InvalidOperationException("Gói dịch vụ được chọn hiện không còn mở đăng ký mới");
+        }
+
+        Subscription currentSub = subscriptionRepository.findFirstByCompanyIdAndStatusOrderByEndAtDesc(targetCompanyId, "ACTIVE")
+                .or(() -> subscriptionRepository.findFirstByCompanyIdOrderByCreatedAtDesc(targetCompanyId))
+                .orElse(null);
+
+        Plan previousPlan = currentSub != null ? currentSub.getPlan() : null;
+
+        java.time.LocalDateTime now = java.time.LocalDateTime.now();
+
+        int inputMonths = request.getDurationMonths() != null ? request.getDurationMonths() : 1;
+        if (inputMonths != 1 && inputMonths != 12) {
+            throw new InvalidOperationException("Hệ thống hiện tại chỉ hỗ trợ chu kỳ thanh toán 1 tháng hoặc 1 năm (12 tháng)");
+        }
+
+        boolean isAnnual = isAnnualSubscription(currentSub, now);
+        if (isAnnual && inputMonths != 12) {
+            throw new InvalidOperationException("Gói hiện tại của bạn là gói theo Năm. Khi nâng cấp lên gói cao hơn, bạn cần chọn chu kỳ 1 Năm (12 Tháng) để bảo toàn giá trị khấu trừ tiền thừa.");
+        }
+        int months = isAnnual ? 12 : inputMonths;
+
+        // 1. Tính toán giá gói mới
+        java.math.BigDecimal fullNewPlanAmount = targetPlan.getPrice().multiply(java.math.BigDecimal.valueOf(months));
+        java.math.BigDecimal unusedCredit = java.math.BigDecimal.ZERO;
+        long remainingDays = 0;
+
+        // 2. Tính tiền thừa (Proration) nếu gói cũ có phí và còn ngày sử dụng
+        if (currentSub != null && currentSub.getPlan() != null
+                && currentSub.getPlan().getPrice().compareTo(java.math.BigDecimal.ZERO) > 0
+                && currentSub.getEndAt() != null && currentSub.getEndAt().isAfter(now)) {
+
+            java.time.Duration durationRemaining = java.time.Duration.between(now, currentSub.getEndAt());
+            remainingDays = Math.max(1, durationRemaining.toDays());
+
+            java.math.BigDecimal dailyRate = currentSub.getPlan().getPrice()
+                    .divide(java.math.BigDecimal.valueOf(30), 4, java.math.RoundingMode.HALF_UP);
+
+            unusedCredit = dailyRate.multiply(java.math.BigDecimal.valueOf(remainingDays))
+                    .setScale(0, java.math.RoundingMode.DOWN);
+
+            if (unusedCredit.compareTo(fullNewPlanAmount) > 0) {
+                unusedCredit = fullNewPlanAmount;
+            }
+        }
+
+        // 3. Số tiền thực tế phải thanh toán sau khi khấu trừ tiền thừa
+        java.math.BigDecimal amountToPay = fullNewPlanAmount.subtract(unusedCredit);
+        if (amountToPay.compareTo(java.math.BigDecimal.ZERO) < 0) {
+            amountToPay = java.math.BigDecimal.ZERO;
+        }
+
+        // 4. Hạn dùng mới bắt đầu tính từ ngày nâng cấp
+        java.time.LocalDateTime endAt = now.plusMonths(months);
+
+        Subscription targetSubscription;
+        if (currentSub != null) {
+            currentSub.setPlan(targetPlan);
+            currentSub.setStatus("ACTIVE");
+            currentSub.setStartAt(now);
+            currentSub.setEndAt(endAt);
+            currentSub.setPendingPlanId(null);
+            targetSubscription = subscriptionRepository.save(currentSub);
+        } else {
+            Subscription newSub = new Subscription();
+            newSub.setCompany(company);
+            newSub.setPlan(targetPlan);
+            newSub.setStatus("ACTIVE");
+            newSub.setStartAt(now);
+            newSub.setEndAt(endAt);
+            targetSubscription = subscriptionRepository.save(newSub);
+        }
+
+        String transactionRef = "TXN_" + System.currentTimeMillis() + "_" + (int)(Math.random() * 1000);
+        Payment payment = new Payment();
+        payment.setSubscription(targetSubscription);
+        payment.setAmount(amountToPay);
+        payment.setCurrency("VND");
+        payment.setProvider(request.getPaymentProvider() != null ? request.getPaymentProvider() : "SIMULATED");
+        payment.setStatus("SUCCESS");
+        payment.setTransactionRef(transactionRef);
+        payment.setPaidAt(now);
+        paymentRepository.save(payment);
+
+        UpgradeSubscriptionResponse resp = new UpgradeSubscriptionResponse();
+        resp.setSubscriptionId(targetSubscription.getId());
+        resp.setCompanyId(targetCompanyId);
+        resp.setPreviousPlan(PlanResponse.fromEntity(previousPlan));
+        resp.setUpgradedPlan(PlanResponse.fromEntity(targetPlan));
+        resp.setStatus("ACTIVE");
+        resp.setStartAt(targetSubscription.getStartAt());
+        resp.setEndAt(targetSubscription.getEndAt());
+        resp.setAmountPaid(amountToPay);
+        resp.setFullPrice(fullNewPlanAmount);
+        resp.setUnusedCreditAmount(unusedCredit);
+        resp.setRemainingDaysCredited(remainingDays);
+        resp.setPaymentProvider(payment.getProvider());
+        resp.setTransactionRef(transactionRef);
+
+        if (unusedCredit.compareTo(java.math.BigDecimal.ZERO) > 0) {
+            resp.setMessage(String.format("Nâng cấp thành công sang %s. Đã khấu trừ %s (tiền thừa %d ngày gói cũ).",
+                    targetPlan.getName(),
+                    new java.text.DecimalFormat("#,### ₫").format(unusedCredit),
+                    remainingDays));
+        } else {
+            resp.setMessage("Nâng cấp gói dịch vụ thành công sang " + targetPlan.getName());
+        }
+
+        return resp;
+    }
+
+    @Override
+    @Transactional
+    public DowngradeSubscriptionResponse requestDowngradeSubscription(String currentUserEmail, Long companyId, DowngradeSubscriptionRequest request) {
+        User currentUser = getUserByEmail(currentUserEmail);
+        Long targetCompanyId = companyId != null ? companyId : TenantContext.getTenantId();
+        if (targetCompanyId == null) {
+            throw new InvalidOperationException("Bạn chưa chọn công ty hoạt động");
+        }
+
+        if (!isSuperAdminRole(currentUser.getRole()) && !companySecurityEvaluator.isOwnerOrAdmin(currentUser.getId(), targetCompanyId)) {
+            throw new InvalidOperationException("Chỉ chủ sở hữu (Owner) hoặc quản trị viên (Admin) của công ty mới có quyền hạ cấp gói dịch vụ");
+        }
+
+        Plan targetPlan = planRepository.findById(request.getTargetPlanId())
+                .orElseThrow(() -> new ResourceNotFoundException("Plan", "id", request.getTargetPlanId()));
+
+        if (targetPlan.getStatus() != PlanStatus.ACTIVE) {
+            throw new InvalidOperationException("Gói dịch vụ muốn hạ cấp hiện không còn hoạt động");
+        }
+
+        Subscription currentSub = subscriptionRepository.findFirstByCompanyIdAndStatusOrderByEndAtDesc(targetCompanyId, "ACTIVE")
+                .or(() -> subscriptionRepository.findFirstByCompanyIdOrderByCreatedAtDesc(targetCompanyId))
+                .orElse(null);
+
+        Plan currentPlan = currentSub != null ? currentSub.getPlan() : null;
+
+        if (currentPlan != null && currentPlan.getId().equals(targetPlan.getId())) {
+            throw new InvalidOperationException("Công ty của bạn hiện đang sử dụng gói này rồi");
+        }
+
+        // Kiểm tra nếu giá gói muốn hạ lại lớn hơn gói hiện tại
+        if (currentPlan != null && targetPlan.getPrice().compareTo(currentPlan.getPrice()) >= 0) {
+            throw new InvalidOperationException("Gói được chọn có mức giá cao hơn hoặc tương đương gói hiện tại. Vui lòng sử dụng tính năng Nâng cấp gói.");
+        }
+
+        // Kiểm tra giới hạn tài nguyên trước khi cho phép hạ cấp
+        long activeMembersCount = companyMemberRepository.countByIdCompanyIdAndStatus(targetCompanyId, CompanyMemberStatus.ACTIVE);
+        if (targetPlan.getMaxUser() != null && activeMembersCount > targetPlan.getMaxUser()) {
+            throw new InvalidOperationException(
+                    String.format("Không thể hạ cấp: Công ty hiện đang có %d thành viên hoạt động, vượt quá giới hạn tối đa (%d thành viên) của gói %s. Vui lòng giảm bớt thành viên trước.",
+                            activeMembersCount, targetPlan.getMaxUser(), targetPlan.getName())
+            );
+        }
+
+        long channelsCount = channelRepository.countByCompanyId(targetCompanyId);
+        if (targetPlan.getMaxChannel() != null && channelsCount > targetPlan.getMaxChannel()) {
+            throw new InvalidOperationException(
+                    String.format("Không thể hạ cấp: Công ty hiện đang kết nối %d kênh, vượt quá giới hạn tối đa (%d kênh) của gói %s. Vui lòng gỡ bớt kênh trước.",
+                            channelsCount, targetPlan.getMaxChannel(), targetPlan.getName())
+            );
+        }
+
+        java.time.LocalDateTime now = java.time.LocalDateTime.now();
+        java.time.LocalDateTime effectiveDate;
+
+        // Nếu công ty chưa có subscription hoặc gói hiện tại là Miễn phí hoặc gói đã hết hạn -> Hạ cấp ngay lập tức
+        boolean immediateDowngrade = currentSub == null
+                || currentSub.getEndAt() == null
+                || currentSub.getEndAt().isBefore(now)
+                || (currentPlan != null && currentPlan.getPrice().compareTo(java.math.BigDecimal.ZERO) == 0);
+
+        if (immediateDowngrade) {
+            if (currentSub == null) {
+                Company company = companyRepository.findById(targetCompanyId)
+                        .orElseThrow(() -> new ResourceNotFoundException("Company", "id", targetCompanyId));
+                currentSub = new Subscription();
+                currentSub.setCompany(company);
+            }
+            currentSub.setPlan(targetPlan);
+            currentSub.setStatus("ACTIVE");
+            currentSub.setStartAt(now);
+            currentSub.setEndAt(now.plusYears(10)); // Gói free hoặc hạ cấp ngay hạn dùng dài
+            currentSub.setPendingPlanId(null);
+            subscriptionRepository.save(currentSub);
+            effectiveDate = now;
+        } else {
+            // Đặt lịch hạ cấp vào cuối chu kỳ hiện tại
+            currentSub.setPendingPlanId(targetPlan.getId());
+            subscriptionRepository.save(currentSub);
+            effectiveDate = currentSub.getEndAt();
+        }
+
+        DowngradeSubscriptionResponse resp = new DowngradeSubscriptionResponse();
+        resp.setSubscriptionId(currentSub.getId());
+        resp.setCompanyId(targetCompanyId);
+        resp.setCurrentPlan(PlanResponse.fromEntity(currentPlan));
+        resp.setPendingPlan(PlanResponse.fromEntity(targetPlan));
+        resp.setEffectiveDate(effectiveDate);
+        resp.setMessage(immediateDowngrade
+                ? "Đã hạ cấp sang gói " + targetPlan.getName() + " thành công"
+                : "Đã ghi nhận yêu cầu hạ cấp sang gói " + targetPlan.getName() + ". Gói mới sẽ chính thức có hiệu lực vào cuối chu kỳ hiện tại (" + effectiveDate.toLocalDate() + ").");
+
+        return resp;
+    }
+
+    @Override
+    @Transactional
+    public CompanySubscriptionResponse cancelPendingDowngrade(String currentUserEmail, Long companyId) {
+        User currentUser = getUserByEmail(currentUserEmail);
+        Long targetCompanyId = companyId != null ? companyId : TenantContext.getTenantId();
+        if (targetCompanyId == null) {
+            throw new InvalidOperationException("Bạn chưa chọn công ty hoạt động");
+        }
+
+        if (!isSuperAdminRole(currentUser.getRole()) && !companySecurityEvaluator.isOwnerOrAdmin(currentUser.getId(), targetCompanyId)) {
+            throw new InvalidOperationException("Chỉ chủ sở hữu (Owner) hoặc quản trị viên (Admin) của công ty mới có quyền hủy yêu cầu hạ cấp");
+        }
+
+        Subscription currentSub = subscriptionRepository.findFirstByCompanyIdAndStatusOrderByEndAtDesc(targetCompanyId, "ACTIVE")
+                .or(() -> subscriptionRepository.findFirstByCompanyIdOrderByCreatedAtDesc(targetCompanyId))
+                .orElseThrow(() -> new InvalidOperationException("Không tìm thấy thông tin gói dịch vụ của công ty"));
+
+        if (currentSub.getPendingPlanId() == null) {
+            throw new InvalidOperationException("Công ty không có yêu cầu hạ cấp gói nào đang chờ xử lý");
+        }
+
+        currentSub.setPendingPlanId(null);
+        Subscription saved = subscriptionRepository.save(currentSub);
+
+        return CompanySubscriptionResponse.fromEntity(saved, null);
     }
 }
 

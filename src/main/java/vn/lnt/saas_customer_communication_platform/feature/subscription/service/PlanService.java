@@ -26,5 +26,15 @@ public interface PlanService {
     PlanResponse updatePlanStatus(String currentUserEmail, Long id, PlanStatus status);
 
     void deletePlan(String currentUserEmail, Long id);
+
+    vn.lnt.saas_customer_communication_platform.feature.subscription.dto.CompanySubscriptionResponse getCompanyCurrentSubscription(String currentUserEmail, Long companyId);
+
+    vn.lnt.saas_customer_communication_platform.feature.subscription.dto.UpgradeCalculationResponse calculateUpgradeAmount(String currentUserEmail, Long companyId, Long targetPlanId, Integer durationMonths);
+
+    vn.lnt.saas_customer_communication_platform.feature.subscription.dto.UpgradeSubscriptionResponse upgradeCompanySubscription(String currentUserEmail, Long companyId, vn.lnt.saas_customer_communication_platform.feature.subscription.dto.UpgradeSubscriptionRequest request);
+
+    vn.lnt.saas_customer_communication_platform.feature.subscription.dto.DowngradeSubscriptionResponse requestDowngradeSubscription(String currentUserEmail, Long companyId, vn.lnt.saas_customer_communication_platform.feature.subscription.dto.DowngradeSubscriptionRequest request);
+
+    vn.lnt.saas_customer_communication_platform.feature.subscription.dto.CompanySubscriptionResponse cancelPendingDowngrade(String currentUserEmail, Long companyId);
 }
 

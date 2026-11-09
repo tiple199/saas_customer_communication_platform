@@ -105,5 +105,54 @@ public class PlanController {
         planService.deletePlan(currentUserEmail, id);
         return ResponseEntity.ok(ApiResponse.success("Xóa gói dịch vụ thành công", null));
     }
+
+    @GetMapping("/current-subscription")
+    public ResponseEntity<ApiResponse<vn.lnt.saas_customer_communication_platform.feature.subscription.dto.CompanySubscriptionResponse>> getCompanyCurrentSubscription(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestParam(required = false) Long companyId) {
+        String currentUserEmail = jwt != null ? jwt.getSubject() : null;
+        var response = planService.getCompanyCurrentSubscription(currentUserEmail, companyId);
+        return ResponseEntity.ok(ApiResponse.success("Lấy thông tin gói dịch vụ công ty đang sử dụng thành công", response));
+    }
+
+    @GetMapping("/calculate-upgrade")
+    public ResponseEntity<ApiResponse<vn.lnt.saas_customer_communication_platform.feature.subscription.dto.UpgradeCalculationResponse>> calculateUpgrade(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestParam(required = false) Long companyId,
+            @RequestParam Long targetPlanId,
+            @RequestParam(defaultValue = "1") Integer durationMonths) {
+        String currentUserEmail = jwt != null ? jwt.getSubject() : null;
+        var response = planService.calculateUpgradeAmount(currentUserEmail, companyId, targetPlanId, durationMonths);
+        return ResponseEntity.ok(ApiResponse.success("Tính toán chi phí nâng cấp thành công", response));
+    }
+
+    @PostMapping("/upgrade")
+    public ResponseEntity<ApiResponse<vn.lnt.saas_customer_communication_platform.feature.subscription.dto.UpgradeSubscriptionResponse>> upgradeSubscription(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestParam(required = false) Long companyId,
+            @Valid @RequestBody vn.lnt.saas_customer_communication_platform.feature.subscription.dto.UpgradeSubscriptionRequest request) {
+        String currentUserEmail = jwt != null ? jwt.getSubject() : null;
+        var response = planService.upgradeCompanySubscription(currentUserEmail, companyId, request);
+        return ResponseEntity.ok(ApiResponse.success(response.getMessage(), response));
+    }
+
+    @PostMapping("/downgrade")
+    public ResponseEntity<ApiResponse<vn.lnt.saas_customer_communication_platform.feature.subscription.dto.DowngradeSubscriptionResponse>> requestDowngrade(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestParam(required = false) Long companyId,
+            @Valid @RequestBody vn.lnt.saas_customer_communication_platform.feature.subscription.dto.DowngradeSubscriptionRequest request) {
+        String currentUserEmail = jwt != null ? jwt.getSubject() : null;
+        var response = planService.requestDowngradeSubscription(currentUserEmail, companyId, request);
+        return ResponseEntity.ok(ApiResponse.success(response.getMessage(), response));
+    }
+
+    @DeleteMapping("/downgrade/cancel")
+    public ResponseEntity<ApiResponse<vn.lnt.saas_customer_communication_platform.feature.subscription.dto.CompanySubscriptionResponse>> cancelPendingDowngrade(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestParam(required = false) Long companyId) {
+        String currentUserEmail = jwt != null ? jwt.getSubject() : null;
+        var response = planService.cancelPendingDowngrade(currentUserEmail, companyId);
+        return ResponseEntity.ok(ApiResponse.success("Đã hủy yêu cầu hạ cấp gói cước thành công", response));
+    }
 }
 
