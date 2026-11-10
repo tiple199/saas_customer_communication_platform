@@ -14,6 +14,7 @@ public class CompanySubscriptionResponse {
     private LocalDateTime endAt;
     private Long pendingPlanId;
     private PlanResponse pendingPlan;
+    private UsageStatsDto usage;
 
     public CompanySubscriptionResponse() {
     }
@@ -96,6 +97,14 @@ public class CompanySubscriptionResponse {
 
     public void setPendingPlan(PlanResponse pendingPlan) {
         this.pendingPlan = pendingPlan;
+    }
+
+    public UsageStatsDto getUsage() {
+        return usage;
+    }
+
+    public void setUsage(UsageStatsDto usage) {
+        this.usage = usage;
     }
 }
 

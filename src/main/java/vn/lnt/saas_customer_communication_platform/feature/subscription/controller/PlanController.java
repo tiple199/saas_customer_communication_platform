@@ -154,5 +154,24 @@ public class PlanController {
         var response = planService.cancelPendingDowngrade(currentUserEmail, companyId);
         return ResponseEntity.ok(ApiResponse.success("Đã hủy yêu cầu hạ cấp gói cước thành công", response));
     }
+
+    @PostMapping("/renew")
+    public ResponseEntity<ApiResponse<vn.lnt.saas_customer_communication_platform.feature.subscription.dto.RenewSubscriptionResponse>> renewSubscription(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestParam(required = false) Long companyId,
+            @Valid @RequestBody vn.lnt.saas_customer_communication_platform.feature.subscription.dto.RenewSubscriptionRequest request) {
+        String currentUserEmail = jwt != null ? jwt.getSubject() : null;
+        var response = planService.renewCompanySubscription(currentUserEmail, companyId, request);
+        return ResponseEntity.ok(ApiResponse.success(response.getMessage(), response));
+    }
+
+    @PostMapping("/trigger-expiration-job")
+    public ResponseEntity<ApiResponse<Integer>> triggerExpirationJob(
+            @AuthenticationPrincipal Jwt jwt) {
+        int count = planService.processExpiredSubscriptions();
+        return ResponseEntity.ok(ApiResponse.success(
+                String.format("Đã kích hoạt quét xử lý hết hạn thành công. Tổng số gói cước đã xử lý: %d", count),
+                count));
+    }
 }
 

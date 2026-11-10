@@ -5,6 +5,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 import vn.lnt.saas_customer_communication_platform.feature.channel.entity.Channel;
+import vn.lnt.saas_customer_communication_platform.feature.channel.entity.ChannelStatus;
 
 import java.util.List;
 import java.util.Optional;
@@ -29,4 +30,6 @@ public interface ChannelRepository extends JpaRepository<Channel, Long> {
     boolean existsByCompanyIdAndNameAndIdNot(Long companyId, String name, Long id);
 
     long countByCompanyId(Long companyId);
+
+    long countByCompanyIdAndStatus(Long companyId, ChannelStatus status);
 }

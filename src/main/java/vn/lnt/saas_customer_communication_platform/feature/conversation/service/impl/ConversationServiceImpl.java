@@ -42,6 +42,7 @@ import vn.lnt.saas_customer_communication_platform.feature.conversation.service.
 import vn.lnt.saas_customer_communication_platform.feature.knowledgebase.dto.RagContextResponse;
 import vn.lnt.saas_customer_communication_platform.feature.knowledgebase.llm.LlmService;
 import vn.lnt.saas_customer_communication_platform.feature.knowledgebase.service.RagContextService;
+import vn.lnt.saas_customer_communication_platform.feature.subscription.service.PlanLimitEnforcementService;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -64,6 +65,7 @@ public class ConversationServiceImpl implements ConversationService {
     private final SimpMessagingTemplate messagingTemplate;
     private final RagContextService ragContextService;
     private final LlmService llmService;
+    private final PlanLimitEnforcementService planLimitEnforcementService;
 
     public ConversationServiceImpl(ConversationRepository conversationRepository,
                                    ConversationMessageRepository conversationMessageRepository,
@@ -74,7 +76,8 @@ public class ConversationServiceImpl implements ConversationService {
                                    CompanyRepository companyRepository,
                                    SimpMessagingTemplate messagingTemplate,
                                    RagContextService ragContextService,
-                                   LlmService llmService) {
+                                   LlmService llmService,
+                                   PlanLimitEnforcementService planLimitEnforcementService) {
         this.conversationRepository = conversationRepository;
         this.conversationMessageRepository = conversationMessageRepository;
         this.channelRepository = channelRepository;
@@ -85,6 +88,7 @@ public class ConversationServiceImpl implements ConversationService {
         this.messagingTemplate = messagingTemplate;
         this.ragContextService = ragContextService;
         this.llmService = llmService;
+        this.planLimitEnforcementService = planLimitEnforcementService;
     }
 
     @Override
@@ -271,6 +275,22 @@ public class ConversationServiceImpl implements ConversationService {
             return;
         }
         Company company = compOpt.get();
+
+        // 0. Enforce Plan Limits: Kiểm tra tính năng AI và hạn mức lượt gọi AI trong tháng của công ty
+        if (!planLimitEnforcementService.isAiQuotaAvailable(companyId)) {
+            log.warn("[AI Auto-Receive] Công ty #{} không có quyền AI hoặc đã dùng hết hạn mức AI Quota trong tháng. Tự động chuyển hội thoại #{} sang HUMAN.",
+                    companyId, conversationId);
+            saveConversationMessage(
+                    company,
+                    conversation,
+                    "AI",
+                    null,
+                    "Cuộc hội thoại đã được chuyển tiếp đến đội ngũ tư vấn viên để phục vụ bạn chu đáo hơn. Xin vui lòng đợi trong giây lát!",
+                    "TEXT"
+            );
+            performAiToHumanHandoff(conversation, userQuery, "AI_QUOTA_EXCEEDED_OR_DISABLED");
+            return;
+        }
 
         try {
             // 1. SCRUM-74: Xây dựng Context RAG từ câu hỏi của khách hàng + tài liệu Knowledge Base của công ty

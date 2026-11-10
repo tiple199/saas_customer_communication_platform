@@ -38,6 +38,7 @@ import vn.lnt.saas_customer_communication_platform.feature.knowledgebase.reposit
 import vn.lnt.saas_customer_communication_platform.feature.knowledgebase.repository.DocumentRepository;
 import vn.lnt.saas_customer_communication_platform.feature.knowledgebase.repository.KnowledgeBaseRepository;
 import vn.lnt.saas_customer_communication_platform.feature.knowledgebase.service.DocumentService;
+import vn.lnt.saas_customer_communication_platform.feature.subscription.service.PlanLimitEnforcementService;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -59,6 +60,7 @@ public class DocumentServiceImpl implements DocumentService {
     private final DocumentParserManager documentParserManager;
     private final TextChunker textChunker;
     private final EmbeddingService embeddingService;
+    private final PlanLimitEnforcementService planLimitEnforcementService;
 
     public DocumentServiceImpl(DocumentRepository documentRepository,
                                DocumentChunkRepository documentChunkRepository,
@@ -69,7 +71,8 @@ public class DocumentServiceImpl implements DocumentService {
                                CompanyMemberRepository companyMemberRepository,
                                DocumentParserManager documentParserManager,
                                TextChunker textChunker,
-                               EmbeddingService embeddingService) {
+                               EmbeddingService embeddingService,
+                               PlanLimitEnforcementService planLimitEnforcementService) {
         this.documentRepository = documentRepository;
         this.documentChunkRepository = documentChunkRepository;
         this.knowledgeBaseRepository = knowledgeBaseRepository;
@@ -80,6 +83,7 @@ public class DocumentServiceImpl implements DocumentService {
         this.documentParserManager = documentParserManager;
         this.textChunker = textChunker;
         this.embeddingService = embeddingService;
+        this.planLimitEnforcementService = planLimitEnforcementService;
     }
 
     @Override
@@ -91,6 +95,9 @@ public class DocumentServiceImpl implements DocumentService {
 
         // Chỉ OWNER hoặc ADMIN mới có quyền tải lên tài liệu vào cơ sở tri thức
         validateActiveAdminOrOwner(currentUser.getId(), targetCompanyId, "Chỉ quản trị viên hoặc chủ công ty mới có quyền tải lên tài liệu");
+
+        // Enforce Plan Limits: storageLimit (MB)
+        planLimitEnforcementService.validateCanUploadDocument(targetCompanyId, file != null ? file.getSize() : 0L);
 
         KnowledgeBase knowledgeBase = knowledgeBaseRepository.findByIdAndCompanyId(knowledgeBaseId, targetCompanyId)
                 .orElseThrow(() -> new ResourceNotFoundException("KnowledgeBase", "id", knowledgeBaseId));

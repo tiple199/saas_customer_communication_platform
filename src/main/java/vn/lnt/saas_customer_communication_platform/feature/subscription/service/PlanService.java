@@ -36,5 +36,11 @@ public interface PlanService {
     vn.lnt.saas_customer_communication_platform.feature.subscription.dto.DowngradeSubscriptionResponse requestDowngradeSubscription(String currentUserEmail, Long companyId, vn.lnt.saas_customer_communication_platform.feature.subscription.dto.DowngradeSubscriptionRequest request);
 
     vn.lnt.saas_customer_communication_platform.feature.subscription.dto.CompanySubscriptionResponse cancelPendingDowngrade(String currentUserEmail, Long companyId);
+
+    vn.lnt.saas_customer_communication_platform.feature.subscription.dto.RenewSubscriptionResponse renewCompanySubscription(String currentUserEmail, Long companyId, vn.lnt.saas_customer_communication_platform.feature.subscription.dto.RenewSubscriptionRequest request);
+
+    int processExpiredSubscriptions();
+
+    int checkExpiringSubscriptions();
 }
 

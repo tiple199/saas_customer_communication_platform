@@ -23,6 +23,7 @@ import vn.lnt.saas_customer_communication_platform.feature.company.entity.Compan
 import vn.lnt.saas_customer_communication_platform.feature.company.repository.CompanyMemberRepository;
 import vn.lnt.saas_customer_communication_platform.feature.company.repository.CompanyRepository;
 import vn.lnt.saas_customer_communication_platform.feature.company.service.CompanyService;
+import vn.lnt.saas_customer_communication_platform.feature.subscription.service.PlanLimitEnforcementService;
 
 import java.util.List;
 import java.util.Map;
@@ -36,15 +37,18 @@ public class CompanyServiceImpl implements CompanyService {
     private final CompanyMemberRepository companyMemberRepository;
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+    private final PlanLimitEnforcementService planLimitEnforcementService;
 
     public CompanyServiceImpl(CompanyRepository companyRepository,
                                CompanyMemberRepository companyMemberRepository,
                                UserRepository userRepository,
-                               PasswordEncoder passwordEncoder) {
+                               PasswordEncoder passwordEncoder,
+                               PlanLimitEnforcementService planLimitEnforcementService) {
         this.companyRepository = companyRepository;
         this.companyMemberRepository = companyMemberRepository;
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
+        this.planLimitEnforcementService = planLimitEnforcementService;
     }
 
     private User getUserByEmail(String email) {
@@ -260,6 +264,8 @@ public class CompanyServiceImpl implements CompanyService {
         getActiveAdminOrOwnerMember(currentUser, targetCompanyId,
                 "Chỉ người sở hữu hoặc quản trị viên mới có quyền thêm thành viên vào công ty");
 
+        planLimitEnforcementService.validateCanAddMember(targetCompanyId);
+
         User targetUser = getUserByEmail(request.getEmail());
         CompanyMember savedMember = saveOrReactivateMember(targetUser, targetCompanyId, request.getRole());
         updateTargetUserCompanyIfNull(targetUser, targetCompanyId);
@@ -308,6 +314,10 @@ public class CompanyServiceImpl implements CompanyService {
         validateHigherPriority(inviterMember.getRole(), targetMember.getRole(),
                 "Bạn chỉ được phép cập nhật trạng thái thành viên có cấp bậc thấp hơn mình");
 
+        if (request.getStatus() == CompanyMemberStatus.ACTIVE && targetMember.getStatus() != CompanyMemberStatus.ACTIVE) {
+            planLimitEnforcementService.validateCanAddMember(targetCompanyId);
+        }
+
         targetMember.setStatus(request.getStatus());
         CompanyMember updatedMember = companyMemberRepository.save(targetMember);
 
@@ -337,6 +347,8 @@ public class CompanyServiceImpl implements CompanyService {
 
         validateHigherPriority(inviterMember.getRole(), request.getRole(),
                 "Bạn chỉ được phép cấp tài khoản với vai trò thấp hơn mình");
+
+        planLimitEnforcementService.validateCanAddMember(targetCompanyId);
 
         User targetUser;
         var existingUserOpt = userRepository.findByEmail(request.getEmail());

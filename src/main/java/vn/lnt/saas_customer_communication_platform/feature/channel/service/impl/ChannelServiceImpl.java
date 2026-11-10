@@ -31,6 +31,7 @@ import vn.lnt.saas_customer_communication_platform.feature.conversation.entity.C
 import vn.lnt.saas_customer_communication_platform.feature.conversation.entity.ConversationStatus;
 import vn.lnt.saas_customer_communication_platform.feature.conversation.entity.HandlingMode;
 import vn.lnt.saas_customer_communication_platform.feature.conversation.repository.ConversationRepository;
+import vn.lnt.saas_customer_communication_platform.feature.subscription.service.PlanLimitEnforcementService;
 
 import java.util.List;
 import java.util.stream.Collectors;
@@ -44,19 +45,22 @@ public class ChannelServiceImpl implements ChannelService {
     private final CompanyMemberRepository companyMemberRepository;
     private final ChannelStrategyFactory channelStrategyFactory;
     private final ConversationRepository conversationRepository;
+    private final PlanLimitEnforcementService planLimitEnforcementService;
 
     public ChannelServiceImpl(ChannelRepository channelRepository,
                               UserRepository userRepository,
                               CompanyRepository companyRepository,
                               CompanyMemberRepository companyMemberRepository,
                               ChannelStrategyFactory channelStrategyFactory,
-                              ConversationRepository conversationRepository) {
+                              ConversationRepository conversationRepository,
+                              PlanLimitEnforcementService planLimitEnforcementService) {
         this.channelRepository = channelRepository;
         this.userRepository = userRepository;
         this.companyRepository = companyRepository;
         this.companyMemberRepository = companyMemberRepository;
         this.channelStrategyFactory = channelStrategyFactory;
         this.conversationRepository = conversationRepository;
+        this.planLimitEnforcementService = planLimitEnforcementService;
     }
 
     @Override
@@ -68,6 +72,9 @@ public class ChannelServiceImpl implements ChannelService {
 
         // Chỉ OWNER hoặc ADMIN của công ty mới được phép tạo Channel
         validateActiveAdminOrOwner(currentUser.getId(), targetCompanyId, "Chỉ quản trị viên hoặc chủ công ty mới có quyền tạo kênh kết nối");
+
+        // Enforce Plan Limits: maxChannel & aiEnabled
+        planLimitEnforcementService.validateCanCreateChannel(targetCompanyId, request.getAiEnabled());
 
         // Kiểm tra trùng tên channel trong công ty
         if (channelRepository.existsByCompanyIdAndName(targetCompanyId, request.getName().trim())) {
@@ -187,10 +194,16 @@ public class ChannelServiceImpl implements ChannelService {
         }
 
         if (request.getStatus() != null) {
+            if (request.getStatus() == ChannelStatus.ACTIVE && channel.getStatus() != ChannelStatus.ACTIVE) {
+                planLimitEnforcementService.validateCanActivateChannel(targetCompanyId);
+            }
             channel.setStatus(request.getStatus());
         }
 
         if (request.getAiEnabled() != null) {
+            if (Boolean.TRUE.equals(request.getAiEnabled()) && !Boolean.TRUE.equals(channel.getAiEnabled())) {
+                planLimitEnforcementService.validateCanEnableChannelAi(targetCompanyId);
+            }
             channel.setAiEnabled(request.getAiEnabled());
         }
 
@@ -215,6 +228,10 @@ public class ChannelServiceImpl implements ChannelService {
 
         Channel channel = channelRepository.findByIdAndCompanyId(channelId, targetCompanyId)
                 .orElseThrow(() -> new ResourceNotFoundException("Channel", "id", channelId));
+
+        if (enabled && !Boolean.TRUE.equals(channel.getAiEnabled())) {
+            planLimitEnforcementService.validateCanEnableChannelAi(targetCompanyId);
+        }
 
         channel.setAiEnabled(enabled);
         Channel savedChannel = channelRepository.save(channel);
