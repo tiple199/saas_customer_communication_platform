@@ -38,4 +38,6 @@ public interface ConversationRepository extends JpaRepository<Conversation, Long
     Page<Conversation> findByChannelCompanyId(Long companyId, Pageable pageable);
 
     Page<Conversation> findByChannelCompanyIdAndStatus(Long companyId, ConversationStatus status, Pageable pageable);
+
+    long countByChannelCompanyId(Long companyId);
 }

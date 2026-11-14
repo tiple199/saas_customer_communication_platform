@@ -215,6 +215,10 @@ public class CompanyServiceImpl implements CompanyService {
         User currentUser = getUserByEmail(currentUserEmail);
         Company company = getCompanyByIdOrThrow(companyId);
 
+        if ("SUSPENDED".equalsIgnoreCase(company.getStatus())) {
+            throw new InvalidOperationException("Không thể chuyển sang doanh nghiệp đang bị tạm khóa.");
+        }
+
         CompanyMember member = companyMemberRepository.findByIdUserIdAndIdCompanyId(currentUser.getId(), companyId)
                 .orElseThrow(() -> new InvalidOperationException("Bạn không thuộc công ty này"));
 

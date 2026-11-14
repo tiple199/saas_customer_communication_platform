@@ -30,10 +30,44 @@ public class TenantFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
         try {
-            Long companyId = resolveCompanyId();
-            if (companyId != null) {
-                TenantContext.setTenantId(companyId);
+            String path = request.getRequestURI();
+
+            Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+            if (auth != null && auth.getPrincipal() instanceof Jwt jwt) {
+                String email = jwt.getSubject();
+                if (email != null) {
+                    User user = userRepository.findByEmail(email).orElse(null);
+                    if (user != null) {
+                        boolean isSuperAdmin = "ROLE_SUPER_ADMIN".equalsIgnoreCase(user.getRole()) ||
+                                "SUPER_ADMIN".equalsIgnoreCase(user.getRole());
+
+                        if (!isSuperAdmin && user.getCurrentCompanyId() != null) {
+                            Long companyId = user.getCurrentCompanyId();
+                            boolean isCompanyActive = companySecurityEvaluator.isCompanyActive(companyId);
+
+                            if (!isCompanyActive) {
+                                boolean isAllowedEndpoint = path.startsWith("/api/v1/auth")
+                                        || path.equals("/api/v1/companies/my-companies")
+                                        || path.startsWith("/api/v1/companies/switch")
+                                        || path.startsWith("/api/v1/public");
+
+                                if (!isAllowedEndpoint) {
+                                    response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                                    response.setContentType("application/json;charset=UTF-8");
+                                    response.getWriter().write("{\"statusCode\":403,\"message\":\"Doanh nghiệp của bạn đang bị tạm khóa bởi Quản trị viên hệ thống. Vui lòng liên hệ ban quản trị để được hỗ trợ.\",\"data\":null}");
+                                    return;
+                                }
+                            } else {
+                                boolean isMember = companySecurityEvaluator.isMember(user.getId(), companyId);
+                                if (isMember) {
+                                    TenantContext.setTenantId(companyId);
+                                }
+                            }
+                        }
+                    }
+                }
             }
+
             filterChain.doFilter(request, response);
         } finally {
             TenantContext.clear();

@@ -309,7 +309,7 @@ public class PlanServiceImpl implements PlanService {
                     sub.setStatus("ACTIVE");
                     sub.setStartAt(now);
                     if (nextPlan.getPrice().compareTo(java.math.BigDecimal.ZERO) == 0) {
-                        sub.setEndAt(now.plusYears(10)); // Gói free duy trì dài hạn
+                        sub.setEndAt(null); // Gói free duy trì vĩnh viễn (không giới hạn thời gian)
                     } else {
                         sub.setEndAt(now.plusMonths(1)); // Gói trả phí
                     }
@@ -639,7 +639,7 @@ public class PlanServiceImpl implements PlanService {
             currentSub.setPlan(targetPlan);
             currentSub.setStatus("ACTIVE");
             currentSub.setStartAt(now);
-            currentSub.setEndAt(now.plusYears(10)); // Gói free hoặc hạ cấp ngay hạn dùng dài
+            currentSub.setEndAt(targetPlan.getPrice().compareTo(java.math.BigDecimal.ZERO) == 0 ? null : now.plusMonths(1)); // Gói free duy trì vĩnh viễn
             currentSub.setPendingPlanId(null);
             subscriptionRepository.save(currentSub);
             effectiveDate = now;
@@ -800,7 +800,7 @@ public class PlanServiceImpl implements PlanService {
                     sub.setStatus("ACTIVE");
                     sub.setStartAt(now);
                     if (targetPlan.getPrice().compareTo(java.math.BigDecimal.ZERO) == 0) {
-                        sub.setEndAt(now.plusYears(10));
+                        sub.setEndAt(null); // Gói free duy trì vĩnh viễn (không giới hạn thời gian)
                     } else {
                         sub.setEndAt(now.plusMonths(1));
                     }

@@ -3,6 +3,7 @@ package vn.lnt.saas_customer_communication_platform.feature.company.repository;
 import org.springframework.data.jpa.repository.JpaRepository;
 import vn.lnt.saas_customer_communication_platform.feature.company.entity.CompanyMember;
 import vn.lnt.saas_customer_communication_platform.feature.company.entity.CompanyMemberId;
+import vn.lnt.saas_customer_communication_platform.feature.company.entity.CompanyMemberRole;
 import vn.lnt.saas_customer_communication_platform.feature.company.entity.CompanyMemberStatus;
 
 import java.util.List;
@@ -21,4 +22,6 @@ public interface CompanyMemberRepository extends JpaRepository<CompanyMember, Co
     boolean existsByIdUserIdAndIdCompanyIdAndStatus(Long userId, Long companyId, CompanyMemberStatus status);
 
     long countByIdCompanyIdAndStatus(Long companyId, CompanyMemberStatus status);
+
+    Optional<CompanyMember> findByIdCompanyIdAndRole(Long companyId, CompanyMemberRole role);
 }
