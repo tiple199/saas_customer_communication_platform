@@ -2,7 +2,11 @@ package vn.lnt.saas_customer_communication_platform.feature.subscription.service
 
 import org.springframework.data.domain.Pageable;
 import vn.lnt.saas_customer_communication_platform.dto.PageResponse;
-import vn.lnt.saas_customer_communication_platform.feature.subscription.dto.*;
+import vn.lnt.saas_customer_communication_platform.feature.subscription.dto.ConfirmPaymentRequest;
+import vn.lnt.saas_customer_communication_platform.feature.subscription.dto.CreatePaymentOrderRequest;
+import vn.lnt.saas_customer_communication_platform.feature.subscription.dto.PaymentOrderResponse;
+import vn.lnt.saas_customer_communication_platform.feature.subscription.dto.PaymentResponse;
+import vn.lnt.saas_customer_communication_platform.feature.subscription.dto.PaymentWebhookRequest;
 
 public interface PaymentService {
 
@@ -12,7 +16,7 @@ public interface PaymentService {
 
     PaymentResponse handlePaymentWebhook(PaymentWebhookRequest request);
 
-    PaymentResponse handlePayOSWebhook(PayOSWebhookPayload payload);
+    PaymentResponse handleSePayWebhook(String rawBody, String sepaySignature, String sepayTimestamp, String authorizationHeader);
 
     PaymentResponse cancelPaymentOrder(String currentUserEmail, String transactionRef);
 

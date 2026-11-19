@@ -17,7 +17,11 @@ import vn.lnt.saas_customer_communication_platform.feature.auth.repository.UserR
 import vn.lnt.saas_customer_communication_platform.feature.company.entity.Company;
 import vn.lnt.saas_customer_communication_platform.feature.company.repository.CompanyRepository;
 import vn.lnt.saas_customer_communication_platform.feature.company.security.CompanySecurityEvaluator;
-import vn.lnt.saas_customer_communication_platform.feature.subscription.dto.*;
+import vn.lnt.saas_customer_communication_platform.feature.subscription.dto.ConfirmPaymentRequest;
+import vn.lnt.saas_customer_communication_platform.feature.subscription.dto.CreatePaymentOrderRequest;
+import vn.lnt.saas_customer_communication_platform.feature.subscription.dto.PaymentOrderResponse;
+import vn.lnt.saas_customer_communication_platform.feature.subscription.dto.PaymentResponse;
+import vn.lnt.saas_customer_communication_platform.feature.subscription.dto.PaymentWebhookRequest;
 import vn.lnt.saas_customer_communication_platform.feature.subscription.entity.Payment;
 import vn.lnt.saas_customer_communication_platform.feature.subscription.entity.Plan;
 import vn.lnt.saas_customer_communication_platform.feature.subscription.entity.PlanStatus;
@@ -27,6 +31,7 @@ import vn.lnt.saas_customer_communication_platform.feature.subscription.gateway.
 import vn.lnt.saas_customer_communication_platform.feature.subscription.strategy.PaymentGatewayStrategy;
 import vn.lnt.saas_customer_communication_platform.feature.subscription.strategy.PaymentGatewayStrategyFactory;
 import vn.lnt.saas_customer_communication_platform.feature.subscription.strategy.PaymentProvider;
+import vn.lnt.saas_customer_communication_platform.feature.subscription.strategy.impl.SePayPaymentStrategy;
 import vn.lnt.saas_customer_communication_platform.feature.subscription.repository.PaymentRepository;
 import vn.lnt.saas_customer_communication_platform.feature.subscription.repository.PlanRepository;
 import vn.lnt.saas_customer_communication_platform.feature.subscription.repository.SubscriptionRepository;
@@ -34,10 +39,11 @@ import vn.lnt.saas_customer_communication_platform.feature.subscription.service.
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.Optional;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Service
 public class PaymentServiceImpl implements PaymentService {
@@ -173,8 +179,8 @@ public class PaymentServiceImpl implements PaymentService {
             currentSub = subscriptionRepository.save(currentSub);
         }
 
-        // Sinh orderCode dạng số dương (tương thích PayOS orderCode)
-        long orderCode = (System.currentTimeMillis() / 1000L) * 1000L + (long)((Math.random() * 900L) + 100L);
+        // Sinh orderCode dạng số nguyên 8 chữ số (tương thích cấu trúc mã thanh toán SePay: TP + 6~8 chữ số)
+        long orderCode = 10000000L + ((System.currentTimeMillis() / 100L) % 80000000L) + (long) (Math.random() * 999999L);
 
         // Sinh mã giao dịch duy nhất mã hóa cả loại đơn và số tháng
         String prefix = "RENEW".equals(orderType) ? "RNW" : "UPG";
@@ -185,7 +191,7 @@ public class PaymentServiceImpl implements PaymentService {
         PaymentProvider requestedProvider = PaymentProvider.fromString(provider);
         PaymentGatewayStrategy strategy = paymentGatewayStrategyFactory.getStrategy(requestedProvider);
 
-        // Gọi Payment Gateway Strategy (PayOS, VietQR, VNPay, Simulated,...)
+        // Gọi Payment Gateway Strategy (SePay, VietQR, Simulated,...)
         PaymentGatewayOrderRequest gwReq = new PaymentGatewayOrderRequest();
         gwReq.setOrderCode(orderCode);
         gwReq.setAmount(amountToPay);
@@ -233,7 +239,10 @@ public class PaymentServiceImpl implements PaymentService {
         resp.setBankName(gwResp.getBankName());
         resp.setBankAccountNumber(gwResp.getAccountNumber());
         resp.setBankAccountName(gwResp.getAccountName());
-        resp.setTransferContent(transactionRef);
+        String sepayPrefix = (strategy instanceof SePayPaymentStrategy sp)
+                ? sp.getPaymentCodePrefix()
+                : "TP";
+        resp.setTransferContent(strategy.getProvider() == PaymentProvider.SEPAY ? sepayPrefix + orderCode : transactionRef);
         resp.setCreatedAt(payment.getCreatedAt());
         resp.setExpiresAt(payment.getCreatedAt() != null ? payment.getCreatedAt().plusMinutes(15) : now.plusMinutes(15));
 
@@ -244,7 +253,7 @@ public class PaymentServiceImpl implements PaymentService {
                 resp.setMessage("Giao dịch đã được kích hoạt thành công (Khấu trừ tiền thừa 100%).");
             }
         } else {
-            resp.setMessage("Đơn thanh toán đã được khởi tạo. Vui lòng quét mã QR hoặc hoàn tất thanh toán qua PayOS.");
+            resp.setMessage("Đơn thanh toán đã được khởi tạo. Vui lòng quét mã QR hoặc hoàn tất thanh toán.");
         }
 
         return resp;
@@ -324,43 +333,77 @@ public class PaymentServiceImpl implements PaymentService {
 
     @Override
     @Transactional
-    public PaymentResponse handlePayOSWebhook(PayOSWebhookPayload payload) {
-        if (payload == null || payload.getData() == null || payload.getData().getOrderCode() == null) {
-            throw new InvalidOperationException("Payload Webhook từ PayOS không hợp lệ");
+    public PaymentResponse handleSePayWebhook(
+            String rawBody,
+            String sepaySignature,
+            String sepayTimestamp,
+            String authorizationHeader) {
+
+        if (rawBody == null || rawBody.isBlank()) {
+            throw new InvalidOperationException("Payload Webhook từ SePay rỗng");
         }
 
-        PaymentGatewayStrategy payOsStrategy = paymentGatewayStrategyFactory.getStrategy(PaymentProvider.PAYOS);
-        if (payload.getSignature() != null && payOsStrategy.isConfigured()) {
-            boolean valid = payOsStrategy.verifyWebhookSignature(payload.getSignatureData(), payload.getSignature());
-            if (!valid) {
-                log.warn("[PayOS Webhook] Chữ ký webhook PayOS không hợp lệ cho orderCode={}", payload.getData().getOrderCode());
-                throw new InvalidOperationException("Chữ ký webhook PayOS không hợp lệ");
+        PaymentGatewayStrategy strategy = paymentGatewayStrategyFactory.getStrategy(PaymentProvider.SEPAY);
+        if (strategy instanceof SePayPaymentStrategy sepayStrategy) {
+            // Ưu tiên xác thực chữ ký HMAC-SHA256 (X-SePay-Signature & X-SePay-Timestamp)
+            if (sepaySignature != null && !sepaySignature.isBlank()) {
+                boolean validHmac = sepayStrategy.verifyHmacSignature(rawBody, sepayTimestamp, sepaySignature);
+                if (!validHmac) {
+                    log.warn("[SePay Webhook] Chữ ký HMAC-SHA256 (X-SePay-Signature) không hợp lệ");
+                    throw new InvalidOperationException("Chữ ký HMAC-SHA256 Webhook SePay không hợp lệ");
+                }
+            } else if (authorizationHeader != null && !authorizationHeader.isBlank()) {
+                boolean validApiKey = sepayStrategy.verifyWebhookSignature("", authorizationHeader);
+                if (!validApiKey) {
+                    log.warn("[SePay Webhook] API Key không hợp lệ từ header Authorization");
+                    throw new InvalidOperationException("Xác thực API Key Webhook SePay không hợp lệ");
+                }
             }
         }
 
-        Long orderCode = payload.getData().getOrderCode();
-        Payment payment = paymentRepository.findFirstByTransactionRefContaining(String.valueOf(orderCode))
-                .orElseThrow(() -> new ResourceNotFoundException("Payment", "orderCode", orderCode));
+        String transferType = extractJsonStringField(rawBody, "transferType");
+        String code = extractJsonStringField(rawBody, "code");
+        String content = extractJsonStringField(rawBody, "content");
+
+        if (!transferType.isBlank() && !"in".equalsIgnoreCase(transferType)) {
+            throw new InvalidOperationException("Bỏ qua giao dịch SePay không phải chiều nhận tiền (in)");
+        }
+
+        String rawSearch = (!code.isBlank()) ? code.trim() : content.trim();
+
+        Matcher matcher = Pattern.compile("\\d{6,}").matcher(rawSearch);
+        final String lookupKey = (!rawSearch.isBlank() && matcher.find()) ? matcher.group() : rawSearch;
+
+        Optional<Payment> paymentOpt = Optional.empty();
+        if (!rawSearch.isBlank()) {
+            paymentOpt = paymentRepository.findByTransactionRef(rawSearch)
+                    .or(() -> paymentRepository.findFirstByTransactionRefContaining(lookupKey));
+        }
+
+        // Hỗ trợ lệnh CLI test: `sepay sandbox simulate payment_in --amount 50000` (khi nội dung mô phỏng mặc định chưa gắn mã TP...)
+        if (paymentOpt.isEmpty()) {
+            paymentOpt = paymentRepository.findFirstByStatusOrderByCreatedAtDesc("PENDING");
+            paymentOpt.ifPresent(p -> log.info(
+                    "[SePay Webhook] Không khớp mã trực tiếp từ '{}', tự động khớp đơn PENDING mới nhất: {}",
+                    rawSearch, p.getTransactionRef()));
+        }
+
+        Payment payment = paymentOpt
+                .orElseThrow(() -> new ResourceNotFoundException("Payment", "sepayCode", lookupKey));
 
         if ("SUCCESS".equals(payment.getStatus())) {
             return PaymentResponse.fromEntity(payment);
         }
 
         LocalDateTime now = LocalDateTime.now();
-        if ("00".equals(payload.getCode())) {
-            payment.setStatus("SUCCESS");
-            payment.setPaidAt(now);
-            payment.setProvider("PAYOS");
-            payment = paymentRepository.save(payment);
+        payment.setStatus("SUCCESS");
+        payment.setPaidAt(now);
+        payment.setProvider("SEPAY");
+        payment = paymentRepository.save(payment);
 
-            executePaymentSuccess(payment, now);
-            log.info("[PayOS Webhook] Giao dịch PayOS #{} (orderCode={}) đã được kích hoạt thành công",
-                    payment.getTransactionRef(), orderCode);
-        } else {
-            payment.setStatus("FAILED");
-            payment = paymentRepository.save(payment);
-            log.warn("[PayOS Webhook] Giao dịch PayOS #{} thất bại với code: {}", payment.getTransactionRef(), payload.getCode());
-        }
+        executePaymentSuccess(payment, now);
+        log.info("[SePay Webhook] Giao dịch SePay #{} (code={}, content={}) đã được kích hoạt thành công",
+                payment.getTransactionRef(), code, content);
 
         return PaymentResponse.fromEntity(payment);
     }
@@ -511,5 +554,14 @@ public class PaymentServiceImpl implements PaymentService {
 
     private boolean isSuperAdminRole(String role) {
         return "ROLE_SUPER_ADMIN".equalsIgnoreCase(role) || "SUPER_ADMIN".equalsIgnoreCase(role);
+    }
+
+    private String extractJsonStringField(String json, String fieldName) {
+        if (json == null || fieldName == null) {
+            return "";
+        }
+        Pattern pattern = Pattern.compile("\"" + Pattern.quote(fieldName) + "\"\\s*:\\s*\"([^\"]*)\"");
+        Matcher matcher = pattern.matcher(json);
+        return matcher.find() ? matcher.group(1) : "";
     }
 }

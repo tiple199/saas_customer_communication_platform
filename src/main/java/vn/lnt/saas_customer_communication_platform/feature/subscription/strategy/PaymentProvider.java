@@ -1,21 +1,19 @@
 package vn.lnt.saas_customer_communication_platform.feature.subscription.strategy;
 
 public enum PaymentProvider {
-    PAYOS,
     VIETQR,
-    VNPAY,
-    MOMO,
+    SEPAY,
     STRIPE,
     SIMULATED;
 
     public static PaymentProvider fromString(String provider) {
         if (provider == null || provider.isBlank()) {
-            return PAYOS;
+            return SEPAY;
         }
         try {
             return PaymentProvider.valueOf(provider.trim().toUpperCase());
         } catch (IllegalArgumentException e) {
-            return PAYOS;
+            return SEPAY;
         }
     }
 }

@@ -11,7 +11,7 @@ public class CreatePaymentOrderRequest {
 
     private Integer durationMonths = 1; // 1 hoặc 12
 
-    private String paymentProvider = "VIETQR"; // "VIETQR", "SIMULATED", "VNPAY", "PAYOS"
+    private String paymentProvider = "VIETQR"; // "VIETQR", "SIMULATED", "SEPAY"
 
     private String note;
 

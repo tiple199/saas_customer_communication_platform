@@ -13,7 +13,7 @@ public class PaymentGatewayStrategyFactory {
 
     private final Map<PaymentProvider, PaymentGatewayStrategy> strategyMap = new EnumMap<>(PaymentProvider.class);
 
-    @Value("${payment.gateway.provider:PAYOS}")
+    @Value("${payment.gateway.provider:SEPAY}")
     private String defaultProvider;
 
     public PaymentGatewayStrategyFactory(List<PaymentGatewayStrategy> strategies) {
@@ -28,7 +28,7 @@ public class PaymentGatewayStrategyFactory {
         }
         PaymentGatewayStrategy strategy = strategyMap.get(provider);
         if (strategy == null) {
-            strategy = strategyMap.get(PaymentProvider.PAYOS);
+            strategy = strategyMap.get(PaymentProvider.SEPAY);
             if (strategy == null) {
                 strategy = strategyMap.get(PaymentProvider.VIETQR);
             }

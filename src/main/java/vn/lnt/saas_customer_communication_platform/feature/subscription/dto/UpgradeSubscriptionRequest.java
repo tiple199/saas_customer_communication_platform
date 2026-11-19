@@ -10,7 +10,7 @@ public class UpgradeSubscriptionRequest {
     // Thời hạn đăng ký theo tháng (1, 3, 6, 12 tháng), mặc định 1 tháng
     private Integer durationMonths = 1;
 
-    // Phương thức thanh toán giả lập hoặc cổng thanh toán: "SIMULATED", "VNPAY", "MOMO", "BANK_TRANSFER"
+    // Phương thức thanh toán giả lập hoặc cổng thanh toán: "SIMULATED", "SEPAY", "VIETQR"
     private String paymentProvider = "SIMULATED";
 
     public UpgradeSubscriptionRequest() {

@@ -9,7 +9,11 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
 import vn.lnt.saas_customer_communication_platform.dto.ApiResponse;
 import vn.lnt.saas_customer_communication_platform.dto.PageResponse;
-import vn.lnt.saas_customer_communication_platform.feature.subscription.dto.*;
+import vn.lnt.saas_customer_communication_platform.feature.subscription.dto.ConfirmPaymentRequest;
+import vn.lnt.saas_customer_communication_platform.feature.subscription.dto.CreatePaymentOrderRequest;
+import vn.lnt.saas_customer_communication_platform.feature.subscription.dto.PaymentOrderResponse;
+import vn.lnt.saas_customer_communication_platform.feature.subscription.dto.PaymentResponse;
+import vn.lnt.saas_customer_communication_platform.feature.subscription.dto.PaymentWebhookRequest;
 import vn.lnt.saas_customer_communication_platform.feature.subscription.service.PaymentService;
 
 @RestController
@@ -54,12 +58,15 @@ public class PaymentController {
         return ResponseEntity.ok(ApiResponse.success("Đã xử lý thông báo thanh toán Webhook", response));
     }
 
-    @PostMapping("/payments/webhook/payos")
-    public ResponseEntity<ApiResponse<PaymentResponse>> handlePayOSWebhook(
-            @RequestBody PayOSWebhookPayload payload) {
+    @PostMapping("/payments/webhook/sepay")
+    public ResponseEntity<ApiResponse<PaymentResponse>> handleSePayWebhook(
+            @RequestHeader(value = "X-SePay-Signature", required = false) String sepaySignature,
+            @RequestHeader(value = "X-SePay-Timestamp", required = false) String sepayTimestamp,
+            @RequestHeader(value = "Authorization", required = false) String authorizationHeader,
+            @RequestBody String rawBody) {
 
-        PaymentResponse response = paymentService.handlePayOSWebhook(payload);
-        return ResponseEntity.ok(ApiResponse.success("PayOS Webhook đã xử lý thành công", response));
+        PaymentResponse response = paymentService.handleSePayWebhook(rawBody, sepaySignature, sepayTimestamp, authorizationHeader);
+        return ResponseEntity.ok(ApiResponse.success("SePay Webhook đã xử lý thành công", response));
     }
 
     @PostMapping("/payments/{transactionRef}/cancel")

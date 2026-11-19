@@ -22,6 +22,8 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
 
     Optional<Payment> findFirstByTransactionRefContaining(String keyword);
 
+    Optional<Payment> findFirstByStatusOrderByCreatedAtDesc(String status);
+
     List<Payment> findBySubscriptionCompanyIdOrderByCreatedAtDesc(Long companyId);
 
     Page<Payment> findBySubscriptionCompanyIdOrderByCreatedAtDesc(Long companyId, Pageable pageable);
